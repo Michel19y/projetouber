@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage'; // Importante para o Logout
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
-import { useRouter } from 'expo-router';
+import { Stack, useRouter } from 'expo-router'; // Importado Stack para controle do header
 import React, { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
@@ -25,7 +25,6 @@ export default function TelaHomePassageiro() {
     const [location, setLocation] = useState<any>(null);
     const [destination, setDestination] = useState<any>(null);
     
-    // CORREÇÃO 1: Inicializar sempre como array vazio [] para evitar erro de .length
     const [routeCoords, setRouteCoords] = useState<any[]>([]);
     const [results, setResults] = useState<any[]>([]);
     
@@ -71,12 +70,11 @@ export default function TelaHomePassageiro() {
         })();
     }, []);
 
-    // FUNÇÃO DE LOGOUT ATUALIZADA
     const handleLogout = async () => {
         try {
             await supabase.auth.signOut();
-            await AsyncStorage.removeItem('@user_type'); // Limpa o tipo de usuário
-            router.replace('/(tabs)'); // Volta para a seleção inicial (motorista/passageiro)
+            await AsyncStorage.removeItem('@user_type');
+            router.replace('/(tabs)');
         } catch (error) {
             Alert.alert("Erro", "Não foi possível deslogar.");
         }
@@ -134,6 +132,9 @@ export default function TelaHomePassageiro() {
 
     return (
         <View style={styles.container}>
+            {/* OCULTAR SETA/HEADER AUTOMÁTICO */}
+            <Stack.Screen options={{ headerShown: false }} />
+
             <MapView
                 ref={mapRef}
                 style={styles.map}
@@ -152,7 +153,6 @@ export default function TelaHomePassageiro() {
                 </Marker>
                 {destination && <Marker coordinate={destination} pinColor="#FF3B30" />}
                 
-                {/* CORREÇÃO 2: Verificação segura para renderizar Polyline */}
                 {routeCoords && routeCoords.length > 0 && (
                     <Polyline coordinates={routeCoords} strokeWidth={4} strokeColor="#007AFF" />
                 )}
@@ -194,7 +194,6 @@ export default function TelaHomePassageiro() {
                     />
                 </View>
 
-                {/* CORREÇÃO 3: Renderização segura da lista de busca */}
                 {buscando && results && results.length > 0 && (
                     <View style={styles.resultsList}>
                         <ScrollView keyboardShouldPersistTaps="handled">
@@ -249,7 +248,7 @@ export default function TelaHomePassageiro() {
         </View>
     );
 }
-// ... (estilos permanecem os mesmos)
+
 const mapDarkStyle = [ { "elementType": "geometry", "stylers": [ { "color": "#212121" } ] }, { "elementType": "labels.icon", "stylers": [ { "visibility": "off" } ] }, { "elementType": "labels.text.fill", "stylers": [ { "color": "#757575" } ] }, { "elementType": "labels.text.stroke", "stylers": [ { "color": "#212121" } ] }, { "featureType": "road", "elementType": "geometry.fill", "stylers": [ { "color": "#2c2c2c" } ] }, { "featureType": "water", "elementType": "geometry", "stylers": [ { "color": "#000000" } ] } ];
 
 const styles = StyleSheet.create({

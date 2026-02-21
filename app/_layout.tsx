@@ -3,13 +3,12 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { supabase } from '../src/lib/supabase';
 
-import { Ionicons } from '@expo/vector-icons'; // Import para a setinha
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
@@ -70,28 +69,15 @@ export default function RootLayout() {
     );
   }
 
-  return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack screenOptions={{ headerShown: false }}>
-        {/* Habilitamos o header para o grupo (auth) para aparecer a setinha */}
-        <Stack.Screen 
-          name="(auth)" 
-          options={{ 
-            headerShown: true, 
-            headerTransparent: true, 
-            headerTitle: '', 
-            headerTintColor: '#fff',
-            headerLeft: () => (
-              <TouchableOpacity onPress={() => router.replace('/(tabs)')}>
-                <Ionicons name="arrow-back" size={28} color="#fff" style={{ marginLeft: 10 }} />
-              </TouchableOpacity>
-            )
-          }} 
-        />
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="(telas)" options={{ headerShown: false }} />
-      </Stack>
-      <StatusBar style="auto" />
-    </ThemeProvider>
-  );
+ return (
+  <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+    <Stack screenOptions={{ headerShown: false }}>
+      {/* Remova todas as options de header daqui */}
+      <Stack.Screen name="(auth)" /> 
+      <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="(telas)" />
+    </Stack>
+    <StatusBar style="auto" />
+  </ThemeProvider>
+);
 }

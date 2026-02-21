@@ -7,7 +7,8 @@ export default function AuthLayout() {
      
         // 2. Esconde o nome da pasta/arquivo
         headerTitle: "", 
-        
+          // 4. Cor da seta de voltar
+        headerTintColor: '#fff', 
         // 3. Deixa o fundo transparente para não tapar o seu layout preto
         headerTransparent: true, 
       
