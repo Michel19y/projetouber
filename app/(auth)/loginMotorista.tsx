@@ -72,7 +72,8 @@ export default function LoginMotorista() {
                 if (Platform.OS === 'web') window.alert('Login aprovado!');
                 
                 // Manda direto para a tela interna (conforme o RootLayout agora espera)
-                router.replace('../(telas)/motoristaLogado');
+               // No LoginMotorista.tsx, altere para:
+router.replace({ pathname: '/(telas)/motoristaLogado' });
             }
 
         } catch (err) {

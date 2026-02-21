@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { supabase } from '../../src/lib/supabase';
 
-// 1. MOVA O INPUTFIELD PARA FORA DO COMPONENTE PRINCIPAL
+// Componente de Input reutilizável
 const InputField = ({ icon, ...props }: any) => (
   <View style={styles.inputWrapper}>
     <Ionicons name={icon} size={20} color="#666" style={styles.inputIcon} />
@@ -24,6 +24,7 @@ export default function RegisterPassageiro() {
   async function handleSignUp() {
     const cpfLimpo = cpf.replace(/\D/g, '');
 
+    // Validação básica
     if (!email || !password || !nome || !cpfLimpo) {
       Alert.alert('Campos incompletos', 'Por favor, preencha todos os dados.');
       return;
@@ -32,7 +33,8 @@ export default function RegisterPassageiro() {
     setLoading(true);
 
     try {
-      // REGRA SOLICITADA: Verificação de CPF no processo de aprovação
+      // 1. REGRA DE NEGÓCIO: Verificação de CPF em análise (da memória salva)
+      // Se o usuário tenta cadastrar com CPF que já está sendo verificado
       const { data: existente } = await supabase
         .from('motoristas_pretendentes')
         .select('cpf')
@@ -40,32 +42,53 @@ export default function RegisterPassageiro() {
         .maybeSingle();
 
       if (existente) {
+        // Mensagem exata solicitada conforme os requisitos salvos
         Alert.alert('Aviso', 'esse cpf ja esta no processo de verificação de aprovaãop');
         setLoading(false);
         return;
       }
 
-      // Cadastro no Auth
+      // 2. CADASTRO NO AUTH (Cria a conta de usuário)
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
         password,
-        options: { data: { full_name: nome, type: 'passageiro' } }
+        options: { 
+          data: { 
+            full_name: nome, 
+            type: 'passageiro' 
+          } 
+        }
       });
 
       if (authError) throw authError;
 
-      // Inserção na tabela de passageiros
-      const { error: dbError } = await supabase
-        .from('passageiros')
-        .insert([{ id: authData.user?.id, nome, email, cpf: cpfLimpo, celular }]);
+      // 3. INSERÇÃO NA TABELA PASSAGEIROS
+      // Só prossegue se o usuário foi criado no Auth com sucesso
+      if (authData.user) {
+        const { error: dbError } = await supabase
+          .from('passageiros')
+          .insert([{ 
+            id: authData.user.id, 
+            nome, 
+            email, 
+            cpf: cpfLimpo, 
+            celular 
+          }]);
 
-      if (dbError) throw dbError;
+        if (dbError) {
+          // Log detalhado para você ver no terminal por que a tabela rejeitou
+          console.error("Erro ao inserir na tabela passageiros:", dbError.message);
+          throw new Error("Usuário criado, mas erro ao salvar dados: " + dbError.message);
+        }
 
-      Alert.alert('Sucesso!', 'Cadastro realizado com sucesso.');
-      router.replace('/(telas)/passageiroLogado');
+        Alert.alert('Sucesso!', 'Cadastro realizado com sucesso.');
+        
+        // Redirecionamento usando a rota absoluta limpa
+        router.replace('/passageiroLogado');
+      }
 
     } catch (err: any) {
-      Alert.alert('Erro', err.message);
+      Alert.alert('Erro', err.message || 'Ocorreu um erro inesperado.');
     } finally {
       setLoading(false);
     }
@@ -84,14 +107,59 @@ export default function RegisterPassageiro() {
         
         <View style={styles.form}>
           <Text style={styles.sectionLabel}>Dados Pessoais</Text>
-          <InputField icon="person-outline" placeholder="Nome Completo" value={nome} onChangeText={setNome} />
-          <InputField icon="mail-outline" placeholder="E-mail" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
-          <InputField icon="card-outline" placeholder="CPF (somente números)" value={cpf} onChangeText={setCpf} keyboardType="numeric" maxLength={11} />
-          <InputField icon="lock-closed-outline" placeholder="Crie uma senha" value={password} onChangeText={setPassword} secureTextEntry />
-          <InputField icon="call-outline" placeholder="Celular com DDD" value={celular} onChangeText={setCelular} keyboardType="phone-pad" />
+          
+          <InputField 
+            icon="person-outline" 
+            placeholder="Nome Completo" 
+            value={nome} 
+            onChangeText={setNome} 
+          />
+          
+          <InputField 
+            icon="mail-outline" 
+            placeholder="E-mail" 
+            value={email} 
+            onChangeText={setEmail} 
+            autoCapitalize="none" 
+            keyboardType="email-address" 
+          />
+          
+          <InputField 
+            icon="card-outline" 
+            placeholder="CPF (somente números)" 
+            value={cpf} 
+            onChangeText={setCpf} 
+            keyboardType="numeric" 
+            maxLength={11} 
+          />
+          
+          <InputField 
+            icon="lock-closed-outline" 
+            placeholder="Crie uma senha" 
+            value={password} 
+            onChangeText={setPassword} 
+            secureTextEntry 
+          />
+          
+          <InputField 
+            icon="call-outline" 
+            placeholder="Celular com DDD" 
+            value={celular} 
+            onChangeText={setCelular} 
+            keyboardType="phone-pad" 
+          />
 
-          <TouchableOpacity style={styles.button} onPress={handleSignUp} disabled={loading} activeOpacity={0.8}>
-            {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.buttonText}>Finalizar Cadastro</Text>}
+          <TouchableOpacity 
+            style={styles.button} 
+            onPress={handleSignUp} 
+            disabled={loading} 
+            activeOpacity={0.8}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.buttonText}>Finalizar Cadastro</Text>
+            )}
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -99,7 +167,6 @@ export default function RegisterPassageiro() {
   );
 }
 
-// ... (mantenha seus estilos abaixo)
 const styles = StyleSheet.create({
   container: { paddingHorizontal: 25, paddingBottom: 40, paddingTop: 90 },
   header: { marginBottom: 30 },
