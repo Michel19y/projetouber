@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage'; // Importado para salvar a memória do perfil
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -27,19 +28,19 @@ export default function LoginMotorista() {
         setLoading(true);
 
         try {
-            // 1. AUTENTICAÇÃO OFICIAL (Usa o profiles/auth.users)
+            // 1. AUTENTICAÇÃO OFICIAL
             const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ 
                 email, 
                 password 
             });
 
             if (authError) {
-                notify('Erro no Login', 'E-mail ou senha incorretos no sistema de perfis.');
+                notify('Erro no Login', 'E-mail ou senha incorretos.');
                 setLoading(false);
                 return;
             }
 
-            // 2. VERIFICAÇÃO DE STATUS (Na sua tabela personalizada)
+            // 2. VERIFICAÇÃO DE STATUS NA TABELA motoristas_pretendentes
             const { data: pretendente, error: dbError } = await supabase
                 .from('motoristas_pretendentes')
                 .select('situacao')
@@ -48,12 +49,12 @@ export default function LoginMotorista() {
 
             if (dbError || !pretendente) {
                 notify('Erro', 'Vínculo de motorista não encontrado.');
-                await supabase.auth.signOut(); // Desloga pois não é um pretendente válido
+                await supabase.auth.signOut();
                 setLoading(false);
                 return;
             }
 
-            // 3. REGRA DE NEGÓCIO: Só entra se estiver aprovado em 'motoristas_pretendentes'
+            // 3. REGRA DE NEGÓCIO E REDIRECIONAMENTO INTELIGENTE
             if (pretendente.situacao === 'pendente') {
                 notify('Aguardando', 'Seu cadastro está em análise. Verifique novamente em breve.');
                 await supabase.auth.signOut(); 
@@ -63,9 +64,15 @@ export default function LoginMotorista() {
                 await supabase.auth.signOut();
                 setLoading(false);
             } else if (pretendente.situacao === 'aprovado') {
-                // SUCESSO TOTAL
+                
+                // --- AQUI ESTÁ A CHAVE DA LÓGICA ---
+                // Salva que o último perfil logado neste celular foi o de MOTORISTA
+                await AsyncStorage.setItem('@user_type', 'motorista');
+                
                 if (Platform.OS === 'web') window.alert('Login aprovado!');
-                router.replace('/(tabs)');
+                
+                // Manda direto para a tela interna (conforme o RootLayout agora espera)
+                router.replace('../(telas)/motoristaLogado');
             }
 
         } catch (err) {
@@ -74,6 +81,7 @@ export default function LoginMotorista() {
         }
     }
 
+    // ... (restante do código JSX e Styles permanece o mesmo)
     return (
         <KeyboardAvoidingView 
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
@@ -81,7 +89,7 @@ export default function LoginMotorista() {
         >
             <View style={styles.content}>
                 <View style={styles.iconCircle}>
-                    <Ionicons name="key" size={40} color="#007AFF" />
+                    <Ionicons name="key" size={40} color="#1eb318" />
                 </View>
 
                 <Text style={styles.title}>Acesse sua conta</Text>
@@ -123,7 +131,7 @@ export default function LoginMotorista() {
                     onPress={() => router.push('/(auth)/registerMotorista')}
                 >
                     <Text style={styles.registerTextNormal}>Novo por aqui? </Text>
-                    <Text style={styles.registerTextBold}>Criar cadastro de pretendente</Text>
+                    <Text style={styles.registerTextBold}>Criar cadastro de motorista</Text>
                 </TouchableOpacity>
             </View>
         </KeyboardAvoidingView>
@@ -134,9 +142,9 @@ const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#000' },
     content: { flex: 1, justifyContent: 'center', paddingHorizontal: 30 },
     iconCircle: {
-        width: 80, height: 80, borderRadius: 40, backgroundColor: '#007AFF15',
+        width: 80, height: 80, borderRadius: 40, backgroundColor: '#1ac22815',
         justifyContent: 'center', alignItems: 'center', alignSelf: 'center',
-        marginBottom: 20, borderWidth: 1, borderColor: '#007AFF30',
+        marginBottom: 20, borderWidth: 1, borderColor: '#21b84730',
     },
     title: { fontSize: 24, fontWeight: '800', color: '#fff', textAlign: 'center', marginBottom: 8 },
     subtitle: { fontSize: 14, color: '#666', textAlign: 'center', marginBottom: 40 },
@@ -144,9 +152,9 @@ const styles = StyleSheet.create({
     inputWrapper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#111', borderRadius: 14, borderWidth: 1, borderColor: '#222', paddingHorizontal: 15 },
     inputIcon: { marginRight: 10 },
     input: { flex: 1, color: '#fff', paddingVertical: 18, fontSize: 16 },
-    button: { backgroundColor: '#007AFF', paddingVertical: 18, borderRadius: 14, alignItems: 'center', marginTop: 10 },
+    button: { backgroundColor: '#1eb318', paddingVertical: 18, borderRadius: 14, alignItems: 'center', marginTop: 10 },
     buttonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
     registerLink: { flexDirection: 'row', justifyContent: 'center', marginTop: 30 },
     registerTextNormal: { color: '#666', fontSize: 15 },
-    registerTextBold: { color: '#007AFF', fontSize: 15, fontWeight: 'bold' }
+    registerTextBold: { color: '#34C759', fontSize: 15, fontWeight: 'bold' }
 });

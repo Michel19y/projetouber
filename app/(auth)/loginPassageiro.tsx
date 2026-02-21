@@ -39,7 +39,7 @@ export default function LoginPassegeiro() {
         </View>
 
         <Text style={styles.title}>Acesse sua conta</Text>
-        <Text style={styles.subtitle}>Olá motorista, que bom ver você novamente!</Text>
+        <Text style={styles.subtitle}>Olá passageiro, que bom ver você novamente!</Text>
         
         {/* Form */}
         <View style={styles.form}>

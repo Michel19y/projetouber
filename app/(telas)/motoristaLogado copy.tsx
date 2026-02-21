@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage'; // Importação necessária
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -13,27 +14,18 @@ export default function TelaHomeMotorista() {
     useEffect(() => {
         async function loadData() {
             try {
-                // 1. Pegar usuário da sessão
                 const { data: { session } } = await supabase.auth.getSession();
                 
                 if (!session) {
-                    console.log("Sem sessão ativa, voltando para login...");
                     router.replace('/(auth)/loginMotorista');
                     return;
                 }
 
-                console.log("Usuário logado:", session.user.email);
-
-                // 2. Buscar nome na tabela motoristas_pretendentes
                 const { data, error } = await supabase
                     .from('motoristas_pretendentes')
                     .select('nome')
                     .eq('email', session.user.email)
-                    .maybeSingle(); // maybeSingle evita erro se não achar nada
-
-                if (error) {
-                    console.error("Erro no Banco:", error.message);
-                }
+                    .maybeSingle();
 
                 if (data && data.nome) {
                     setNome(data.nome);
@@ -44,20 +36,26 @@ export default function TelaHomeMotorista() {
                 setLoading(false);
             }
         }
-
         loadData();
     }, []);
 
+    // FUNÇÃO DE LOGOUT ATUALIZADA
     const handleLogout = async () => {
-        await supabase.auth.signOut();
-        router.replace('/(auth)/loginMotorista');
+        try {
+            await supabase.auth.signOut();
+            // 1. Apaga a "memória" de que ele era motorista
+            await AsyncStorage.removeItem('@user_type'); 
+            // 2. Volta para a estaca zero (Tabs inicial)
+            router.replace('/(tabs)'); 
+        } catch (error) {
+            Alert.alert("Erro", "Não foi possível deslogar corretamente.");
+        }
     };
 
     if (loading) {
         return (
             <View style={styles.containerCenter}>
                 <ActivityIndicator size="large" color="#007AFF" />
-                <Text style={{color: '#fff', marginTop: 10}}>Carregando perfil...</Text>
             </View>
         );
     }
@@ -70,11 +68,10 @@ export default function TelaHomeMotorista() {
                     <Text style={styles.subtitle}>Parceiro verificado</Text>
                 </View>
                 <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
-                    <Ionicons name="log-out" size={24} color="#FF3B30" />
+                    <Ionicons name="log-out-outline" size={26} color="#FF3B30" />
                 </TouchableOpacity>
             </View>
 
-            {/* CARD DE SALDO ESTÁTICO */}
             <View style={styles.balanceCard}>
                 <Text style={styles.balanceLabel}>SALDO TOTAL</Text>
                 <Text style={styles.balanceValue}>R$ 1.250,50</Text>

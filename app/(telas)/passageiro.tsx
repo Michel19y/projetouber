@@ -84,13 +84,14 @@ const styles = StyleSheet.create({
     gap: 15,
   },
   primaryButton: {
-    backgroundColor: '#fff', // Branco para o passageiro (visual clean)
+    backgroundColor: '#143dc2cc', // Branco para o passageiro (visual clean)
     paddingVertical: 18,
     borderRadius: 16,
+    color: '#fff',
     alignItems: 'center',
   },
   primaryButtonText: {
-    color: '#000',
+    color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
   },

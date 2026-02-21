@@ -1,12 +1,15 @@
+import AsyncStorage from '@react-native-async-storage/async-storage'; // Importante para a memória de perfil
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, TouchableOpacity, View } from 'react-native';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { supabase } from '../src/lib/supabase';
+
+import { Ionicons } from '@expo/vector-icons'; // Import para a setinha
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
@@ -17,31 +20,46 @@ export default function RootLayout() {
   useEffect(() => {
     const checkInitialSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
-      handleNavigation(session);
+      await handleNavigation(session);
       setIsReady(true); 
     };
     checkInitialSession();
 
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-      handleNavigation(session);
+      if (event === 'SIGNED_OUT') {
+        // Limpa o tipo de usuário ao deslogar para permitir voltar ao início livremente
+        await AsyncStorage.removeItem('@user_type');
+      }
+      await handleNavigation(session);
     });
 
     return () => authListener.subscription.unsubscribe();
-  }, [segments, isReady]);
+  }, [segments]);
 
-  const handleNavigation = (session: any) => {
-    if (!isReady) return;
+  const handleNavigation = async (session: any) => {
+    if (!router) return;
 
-    // Se houver sessão, tiramos ele das telas de "visitante" (Tabs ou Auth)
+    const userType = await AsyncStorage.getItem('@user_type');
+    const inAuthGroup = segments[0] === '(auth)';
+    
     if (session) {
-      const isVisitorArea = segments[0] === '(tabs)' || segments[0] === '(auth)';
-      
-      if (isVisitorArea) {
-        // Redireciona para o caminho específico que você definiu no Drive E:
-        router.replace('/(telas)/motoristaLogado');
+      if (inAuthGroup || segments.length === 0 || segments[0] === '(tabs)') {
+        const rotaDestino = userType === 'motorista' 
+          ? '/(telas)/motoristaLogado' 
+          : '/(telas)/passageiroLogado';
+        router.replace(rotaDestino);
       }
-    } 
-    // Se NÃO houver sessão, o fluxo segue padrão e ele cai nas (tabs) automaticamente
+    } else {
+      // Se não houver sessão e o usuário não estiver em Auth ou Tabs, 
+      // mas tiver um userType salvo, ele força o login.
+      // Se ele clicar em voltar e deletarmos o userType, ele cai nas (tabs)
+      if (!inAuthGroup && segments[0] !== '(tabs)' && userType) {
+         const rotaLogin = userType === 'motorista' 
+          ? '/(auth)/loginMotorista' 
+          : '/(auth)/loginPassageiro';
+        router.replace(rotaLogin);
+      }
+    }
   };
 
   if (!isReady) {
@@ -55,11 +73,23 @@ export default function RootLayout() {
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack screenOptions={{ headerShown: false }}>
-        {/* Ordem de prioridade das rotas */}
+        {/* Habilitamos o header para o grupo (auth) para aparecer a setinha */}
+        <Stack.Screen 
+          name="(auth)" 
+          options={{ 
+            headerShown: true, 
+            headerTransparent: true, 
+            headerTitle: '', 
+            headerTintColor: '#fff',
+            headerLeft: () => (
+              <TouchableOpacity onPress={() => router.replace('/(tabs)')}>
+                <Ionicons name="arrow-back" size={28} color="#fff" style={{ marginLeft: 10 }} />
+              </TouchableOpacity>
+            )
+          }} 
+        />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="(auth)" options={{ headerShown: false }} />
         <Stack.Screen name="(telas)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Aviso' }} />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>
