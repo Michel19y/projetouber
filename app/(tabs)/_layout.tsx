@@ -16,7 +16,7 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: colorScheme === 'dark' ? '#fff' : '#000',
+        tabBarActiveTintColor: colorScheme === 'dark' ? '#fff' : '#ff3939',
         // ESTA LINHA OCULTA O RODAPÉ (TAB BAR)
         tabBarStyle: { display: 'none' },
         // Opcional: Oculta também o cabeçalho das tabs se desejar

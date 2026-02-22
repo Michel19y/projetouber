@@ -1,198 +1,200 @@
 import { supabase } from '@/src/lib/supabase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { JSX, useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    KeyboardAvoidingView, Platform,
-    StyleSheet,
-    Text,
-    TextInput, TouchableOpacity,
-    View
+    ActivityIndicator, Alert, FlatList,
+    ScrollView,
+    StatusBar, StyleSheet, Text, TextInput,
+    TouchableOpacity, View
 } from 'react-native';
 
-// Tipo ajustado conforme sua imagem da tabela (ID é UUID)
-type Motorista = {
-    id: string;
-    nome: string;
-    cpf: string;
-    celular: string;
-    situacao: string;
-    email: string;
-    placa: string;
-    created_at: string;
-};
+// Tipagem baseada nos dados reais que você enviou
+type TableType = 'motoristas_pretendentes' | 'motoristas_ativos' | 'profiles' | 'rides' | 'passageiros';
 
 export default function Dashboard(): JSX.Element {
     const router = useRouter();
-    const [motoristas, setMotoristas] = useState<Motorista[]>([]);
+    const [data, setData] = useState<any[]>([]);
+    const [currentTable, setCurrentTable] = useState<TableType>('motoristas_pretendentes');
     const [loading, setLoading] = useState(true);
-    const [isSubmitting, setIsSubmitting] = useState(false);
-
-    // Form states
+    
+    // Form states (Principais para motoristas_pretendentes)
     const [nome, setNome] = useState('');
     const [cpf, setCpf] = useState('');
-    const [telefone, setTelefone] = useState('');
-    const [status, setStatus] = useState('pendente');
-    const [editId, setEditId] = useState<string | null>(null);
+    const [email, setEmail] = useState('');
 
     useEffect(() => {
-        const checkAdmin = async () => {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session || session.user.user_metadata?.role !== 'admin') {
-                router.replace('/(auth)/loginMotorista');
-                return;
-            }
-            await carregarMotoristas();
-            setLoading(false);
-        };
-        checkAdmin();
-    }, []);
+        fetchData();
+    }, [currentTable]);
 
-    async function carregarMotoristas() {
-        const { data, error } = await supabase
-            .from('motoristas_pretendentes')
-            .select('*')
-            .order('created_at', { ascending: false });
-        if (!error) setMotoristas(data || []);
-    }
-
-    async function salvarMotorista() {
-        const sNome = (nome || '').toString().trim();
-        const sCpf = (cpf || '').toString().trim();
-        const sTel = (telefone || '').toString().trim();
-
-        if (!sNome || !sCpf || !sTel) {
-            Alert.alert('Erro', 'Preencha Nome, CPF e Telefone');
+    async function fetchData() {
+        setLoading(true);
+        const { data: sessionData } = await supabase.auth.getSession();
+        
+        // Verifica admin
+        if (!sessionData.session || sessionData.session.user.user_metadata?.role !== 'admin') {
+            router.replace('/(auth)/loginMotorista');
             return;
         }
 
-        setIsSubmitting(true);
+        const { data: result, error } = await supabase
+            .from(currentTable)
+            .select('*')
+            .order('created_at', { ascending: false });
 
-        // MAPEAR PARA OS NOMES REAIS DA SUA TABELA (IMAGEM 5)
-        const dadosParaSalvar = {
-            nome: sNome,
-            cpf: sCpf,
-            celular: sTel,            // Nome na tabela: celular
-            situacao: status.toLowerCase(), // Nome na tabela: situacao
-            email: `${sNome.split(' ')[0].toLowerCase()}@sistema.com`, // Obrigatório na tabela
-            senha: '123',             // Obrigatório na tabela
-            placa: 'AAA-0000'         // Obrigatório na tabela
-        };
+        if (!error) setData(result || []);
+        setLoading(false);
+    }
 
-        try {
-            let error;
-            if (editId) {
-                const result = await supabase
-                    .from('motoristas_pretendentes')
-                    .update(dadosParaSalvar)
-                    .eq('id', editId);
-                error = result.error;
-            } else {
-                const result = await supabase
-                    .from('motoristas_pretendentes')
-                    .insert([dadosParaSalvar]);
-                error = result.error;
-            }
+    async function handleLogout() {
+        await supabase.auth.signOut();
+        await AsyncStorage.removeItem('@user_type');
+        router.replace('/(tabs)');
+    }
 
-            if (error) throw error;
+    async function handleSavePretendente() {
+        if (!nome || !cpf || !email) return Alert.alert('Erro', 'Preencha os campos obrigatórios');
 
-            Alert.alert('Sucesso', 'Dados gravados com sucesso!');
-            limparFormulario();
-            await carregarMotoristas();
-        } catch (err: any) {
-            console.error("Erro detalhado:", err.message);
-            Alert.alert('Erro no Banco', err.message);
-        } finally {
-            setIsSubmitting(false);
+        // REGRA SALVA: Verificar CPF na tabela de verificação
+        const { data: existe } = await supabase
+            .from('motoristas_pretendentes')
+            .select('cpf')
+            .eq('cpf', cpf)
+            .single();
+
+        if (existe) {
+            Alert.alert('Aviso', 'esse cpf ja esta no processo de verificação de aprovação');
+            return;
+        }
+
+        const { error } = await supabase.from('motoristas_pretendentes').insert([{
+            nome, cpf, email, celular: '000', placa: 'AAA-0000', ano_carro: 2000, situacao: 'pendente'
+        }]);
+
+        if (!error) {
+            Alert.alert('Sucesso', 'Cadastrado com sucesso');
+            setNome(''); setCpf(''); setEmail('');
+            fetchData();
         }
     }
 
-    async function excluirMotorista(id: string) {
-        Alert.alert('Confirmar', 'Deseja excluir?', [
-            { text: 'Não' },
-            { text: 'Sim', onPress: async () => {
-                    const { error } = await supabase.from('motoristas_pretendentes').delete().eq('id', id);
-                    if (!error) await carregarMotoristas();
-                }}
+    async function deleteItem(id: string) {
+        Alert.alert('Confirmar', 'Excluir este registro?', [
+            { text: 'Cancelar' },
+            { text: 'Excluir', onPress: async () => {
+                const { error } = await supabase.from(currentTable).delete().eq('id', id);
+                if (!error) fetchData();
+            }}
         ]);
     }
 
-    function editarMotorista(m: Motorista) {
-        setEditId(m.id);
-        setNome(m.nome || '');
-        setCpf(m.cpf || '');
-        setTelefone(m.celular || ''); // mapeia do banco para o campo telefone
-        setStatus(m.situacao || 'pendente'); // mapeia do banco para o campo status
-    }
+    // Renderizador Inteligente: Mostra dados diferentes por tabela
+    const renderItem = ({ item }: { item: any }) => (
+        <View style={styles.card}>
+            <View style={{ flex: 1 }}>
+                {/* Nome/Título dinâmico */}
+                <Text style={styles.cardTitle}>
+                    {item.nome || item.full_name || item.username || `Corrida: ${item.id.substring(0,8)}`}
+                </Text>
 
-    function limparFormulario() {
-        setEditId(null); setNome(''); setCpf(''); setTelefone(''); setStatus('pendente');
-    }
+                {/* Detalhes dinâmicos conforme a tabela */}
+                <Text style={styles.cardInfo}>
+                    {item.cpf && `CPF: ${item.cpf}`}
+                    {item.placa && `Placa: ${item.placa}`}
+                    {item.origin_text && `De: ${item.origin_text.substring(0,20)}...`}
+                    {item.valor && `Valor: R$ ${item.valor}`}
+                </Text>
 
-    if (loading) return <View style={styles.center}><ActivityIndicator size="large" color="#2563eb" /></View>;
-
-    return (
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.container}>
-            <Text style={styles.title}>Dashboard Admin</Text>
-
-            <View style={styles.form}>
-                <TextInput style={styles.input} placeholder="Nome" value={nome} onChangeText={setNome} />
-                <TextInput style={styles.input} placeholder="CPF" value={cpf} onChangeText={setCpf} keyboardType="numeric" />
-                <TextInput style={styles.input} placeholder="Telefone" value={telefone} onChangeText={setTelefone} keyboardType="phone-pad" />
-                <TextInput style={styles.input} placeholder="Status (pendente/aprovado)" value={status} onChangeText={setStatus} autoCapitalize="none" />
-
-                <TouchableOpacity style={styles.button} onPress={salvarMotorista} disabled={isSubmitting}>
-                    <Text style={styles.buttonText}>{isSubmitting ? 'SALVANDO...' : (editId ? 'ATUALIZAR' : 'CADASTRAR NOVO')}</Text>
-                </TouchableOpacity>
-
-                {editId && (
-                    <TouchableOpacity onPress={limparFormulario} style={[styles.button, {backgroundColor: '#64748b', marginTop: 5}]}>
-                        <Text style={styles.buttonText}>CANCELAR</Text>
-                    </TouchableOpacity>
-                )}
+                <View style={styles.statusRow}>
+                    <View style={[styles.dot, { backgroundColor: item.online || item.status === 'completed' ? '#4ade80' : '#FF9500' }]} />
+                    <Text style={styles.statusText}>
+                        {(item.situacao || item.status || (item.online ? 'Online' : 'Offline')).toUpperCase()}
+                    </Text>
+                </View>
             </View>
 
-            <FlatList
-                data={motoristas}
-                keyExtractor={(item) => item.id}
-                renderItem={({ item }) => (
-                    <View style={styles.card}>
-                        <View style={{flexDirection: 'row', justifyContent: 'space-between'}}>
-                            <Text style={styles.nome}>{item.nome}</Text>
-                            <Text style={styles.badge}>{(item.situacao || 'PENDENTE').toUpperCase()}</Text>
-                        </View>
-                        <Text>CPF: {item.cpf}</Text>
-                        <Text>Tel: {item.celular}</Text>
+            <TouchableOpacity onPress={() => deleteItem(item.id)} style={styles.deleteBtn}>
+                <Text style={{ color: '#ef4444', fontWeight: 'bold', fontSize: 12 }}>EXCLUIR</Text>
+            </TouchableOpacity>
+        </View>
+    );
 
-                        <View style={styles.actions}>
-                            <TouchableOpacity style={styles.edit} onPress={() => editarMotorista(item)}>
-                                <Text style={{color: '#fff'}}>Editar</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity style={styles.delete} onPress={() => excluirMotorista(item.id)}>
-                                <Text style={{color: '#fff'}}>Excluir</Text>
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-                )}
-            />
-        </KeyboardAvoidingView>
+    return (
+        <View style={styles.container}>
+            <StatusBar style="light" />
+            
+            <View style={styles.header}>
+                <View>
+                    <Text style={styles.mainTitle}>Master Admin</Text>
+                    <Text style={styles.subtitle}>Gerenciando: {currentTable}</Text>
+                </View>
+                <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
+                    <Text style={{ color: '#fff', fontSize: 12 }}>SAIR</Text>
+                </TouchableOpacity>
+            </View>
+
+            {/* Menu de Tabelas (Horizontal) */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabsHolder}>
+                {(['motoristas_pretendentes', 'motoristas_ativos', 'passageiros', 'rides', 'profiles'] as TableType[]).map(tab => (
+                    <TouchableOpacity 
+                        key={tab} 
+                        onPress={() => setCurrentTable(tab)}
+                        style={[styles.tab, currentTable === tab && styles.tabActive]}
+                    >
+                        <Text style={[styles.tabText, currentTable === tab && { color: '#000' }]}>
+                            {tab.replace('_', ' ').toUpperCase()}
+                        </Text>
+                    </TouchableOpacity>
+                ))}
+            </ScrollView>
+
+            {/* Form de Cadastro Rápido (Apenas para pretendentes) */}
+            {currentTable === 'motoristas_pretendentes' && (
+                <View style={styles.form}>
+                    <TextInput placeholder="Nome" value={nome} onChangeText={setNome} placeholderTextColor="#666" style={styles.input} />
+                    <TextInput placeholder="CPF" value={cpf} onChangeText={setCpf} placeholderTextColor="#666" style={styles.input} keyboardType="numeric" />
+                    <TextInput placeholder="Email" value={email} onChangeText={setEmail} placeholderTextColor="#666" style={styles.input} autoCapitalize="none" />
+                    <TouchableOpacity onPress={handleSavePretendente} style={styles.saveBtn}>
+                        <Text style={styles.saveBtnText}>ADICIONAR PRETENDENTE</Text>
+                    </TouchableOpacity>
+                </View>
+            )}
+
+            {loading ? (
+                <ActivityIndicator size="large" color="#FF9500" style={{ marginTop: 40 }} />
+            ) : (
+                <FlatList
+                    data={data}
+                    keyExtractor={item => item.id}
+                    renderItem={renderItem}
+                    contentContainerStyle={{ paddingBottom: 40 }}
+                    ListEmptyComponent={<Text style={styles.empty}>Nenhum registro encontrado.</Text>}
+                />
+            )}
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, padding: 16, backgroundColor: '#f8fafc' },
-    title: { fontSize: 22, fontWeight: 'bold', marginBottom: 20, textAlign: 'center' },
-    form: { backgroundColor: '#fff', padding: 15, borderRadius: 12, marginBottom: 20, elevation: 4 },
-    input: { backgroundColor: '#f1f5f9', padding: 12, borderRadius: 8, marginBottom: 10, borderWidth: 1, borderColor: '#e2e8f0' },
-    button: { backgroundColor: '#2563eb', padding: 15, borderRadius: 8, alignItems: 'center' },
-    buttonText: { color: '#fff', fontWeight: 'bold' },
-    card: { backgroundColor: '#fff', padding: 15, borderRadius: 12, marginBottom: 10, borderLeftWidth: 5, borderLeftColor: '#2563eb', elevation: 2 },
-    nome: { fontSize: 16, fontWeight: 'bold' },
-    badge: { color: '#2563eb', fontWeight: 'bold', fontSize: 12 },
-    actions: { flexDirection: 'row', marginTop: 10 },
-    edit: { backgroundColor: '#334155', padding: 8, borderRadius: 6, marginRight: 10 },
-    delete: { backgroundColor: '#ef4444', padding: 8, borderRadius: 6 },
-    center: { flex: 1, justifyContent: 'center', alignItems: 'center' }
+    container: { flex: 1, backgroundColor: '#000', paddingHorizontal: 20, paddingTop: 60 },
+    header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+    mainTitle: { fontSize: 28, fontWeight: '800', color: '#fff', letterSpacing: -1 },
+    subtitle: { fontSize: 14, color: '#FF9500', fontWeight: '600' },
+    logoutBtn: { backgroundColor: '#1a1a1a', padding: 10, borderRadius: 10, borderWidth: 1, borderColor: '#333' },
+    tabsHolder: { maxHeight: 45, marginBottom: 20 },
+    tab: { paddingHorizontal: 15, paddingVertical: 8, borderRadius: 12, backgroundColor: '#111', marginRight: 10, height: 35, borderWidth: 1, borderColor: '#222' },
+    tabActive: { backgroundColor: '#FF9500', borderColor: '#FF9500' },
+    tabText: { color: '#666', fontWeight: '700', fontSize: 11 },
+    form: { backgroundColor: '#111', padding: 15, borderRadius: 20, borderWidth: 1, borderColor: '#222', marginBottom: 20 },
+    input: { backgroundColor: '#1a1a1a', borderRadius: 10, padding: 12, color: '#fff', marginBottom: 10, borderWidth: 1, borderColor: '#222' },
+    saveBtn: { backgroundColor: '#FF9500', padding: 15, borderRadius: 12, alignItems: 'center' },
+    saveBtnText: { fontWeight: '800', color: '#000', fontSize: 12 },
+    card: { backgroundColor: '#111', padding: 18, borderRadius: 20, marginBottom: 12, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#222' },
+    cardTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
+    cardInfo: { color: '#888', fontSize: 13, marginTop: 4 },
+    statusRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
+    dot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
+    statusText: { color: '#fff', fontSize: 10, fontWeight: '800' },
+    deleteBtn: { padding: 10 },
+    empty: { color: '#444', textAlign: 'center', marginTop: 50, fontWeight: '600' }
 });
