@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage'; // Importante para a memória de perfil
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -8,7 +8,6 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { supabase } from '../src/lib/supabase';
-
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
@@ -20,13 +19,14 @@ export default function RootLayout() {
     const checkInitialSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       await handleNavigation(session);
-      setIsReady(true); 
+      setIsReady(true);
     };
+
     checkInitialSession();
 
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_OUT') {
-        // Limpa o tipo de usuário ao deslogar para permitir voltar ao início livremente
+        // Limpa userType ao deslogar
         await AsyncStorage.removeItem('@user_type');
       }
       await handleNavigation(session);
@@ -35,32 +35,41 @@ export default function RootLayout() {
     return () => authListener.subscription.unsubscribe();
   }, [segments]);
 
+  // -------------------------------
+  // Função central de navegação
+  // -------------------------------
   const handleNavigation = async (session: any) => {
     if (!router) return;
 
-    const userType = await AsyncStorage.getItem('@user_type');
-    const inAuthGroup = segments[0] === '(auth)';
-    
+    const inTabsGroup = segments[0] === '(tabs)';
+
     if (session) {
-      if (inAuthGroup || segments.length === 0 || segments[0] === '(tabs)') {
-        const rotaDestino = userType === 'motorista' 
-          ? '/(telas)/motoristaLogado' 
-          : '/(telas)/passageiroLogado';
-        router.replace(rotaDestino);
+      const email = session.user.email;
+
+      // 🔐 Se for admin específico
+      if (email === 'jare7play@gmail.com') {
+        router.replace('/(telas)/dashboard');
+        return;
       }
+
+      // 👇 Se não for admin, segue fluxo normal
+      const userType = await AsyncStorage.getItem('@user_type');
+
+      if (userType === 'motorista') {
+        router.replace('/(telas)/motoristaLogado');
+      } else {
+        router.replace('/(telas)/passageiroLogado');
+      }
+
     } else {
-      // Se não houver sessão e o usuário não estiver em Auth ou Tabs, 
-      // mas tiver um userType salvo, ele força o login.
-      // Se ele clicar em voltar e deletarmos o userType, ele cai nas (tabs)
-      if (!inAuthGroup && segments[0] !== '(tabs)' && userType) {
-         const rotaLogin = userType === 'motorista' 
-          ? '/(auth)/loginMotorista' 
-          : '/(auth)/loginPassageiro';
-        router.replace(rotaLogin);
+      // Não logado → vai para tabs
+      if (!inTabsGroup) {
+        router.replace('/(tabs)');
       }
     }
   };
 
+  // Loader enquanto checa sessão
   if (!isReady) {
     return (
       <View style={{ flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }}>
@@ -69,15 +78,17 @@ export default function RootLayout() {
     );
   }
 
- return (
-  <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-    <Stack screenOptions={{ headerShown: false }}>
-      {/* Remova todas as options de header daqui */}
-      <Stack.Screen name="(auth)" /> 
-      <Stack.Screen name="(tabs)" />
-      <Stack.Screen name="(telas)" />
-    </Stack>
-    <StatusBar style="auto" />
-  </ThemeProvider>
-);
+  // -------------------------------
+  // Render da navegação
+  // -------------------------------
+  return (
+    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="(auth)" /> 
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="(telas)" />
+      </Stack>
+      <StatusBar style="auto" />
+    </ThemeProvider>
+  );
 }
