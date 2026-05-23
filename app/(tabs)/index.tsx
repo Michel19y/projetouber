@@ -1,49 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Modal,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { supabase } from '../../src/lib/supabase';
 
 export default function HomeScreen() {
   const router = useRouter();
-
-  const [modalVisible, setModalVisible] = useState(false);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const handleAdminLogin = async () => {
-    try {
-      setLoading(true);
-
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) {
-        Alert.alert('Erro', error.message);
-        return;
-      }
-
-      setModalVisible(false);
-      router.replace('/(telas)/dashboard');
-    } catch (err) {
-      Alert.alert('Erro inesperado');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   return (
     <View style={styles.container}>
@@ -72,7 +38,7 @@ export default function HomeScreen() {
         {/* Admin */}
         <TouchableOpacity
           style={styles.card}
-          onPress={() => setModalVisible(true)}
+          onPress={() => router.push('/(auth)/loginDashboard')}
         >
           <View style={[styles.iconContainer, { backgroundColor: '#FF950020' }]}>
             <Ionicons name="settings" size={40} color="#FF9500" />
@@ -98,107 +64,21 @@ export default function HomeScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* MODAL ADMIN */}
-      <Modal visible={modalVisible} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <Text style={styles.modalTitle}>Login Admin</Text>
-
-            <TextInput
-              placeholder="Email"
-              placeholderTextColor="#666"
-              style={styles.input}
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-            />
-
-            <TextInput
-              placeholder="Senha"
-              placeholderTextColor="#666"
-              style={styles.input}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-            />
-
-            <TouchableOpacity
-              style={styles.loginButton}
-              onPress={handleAdminLogin}
-              disabled={loading}
-            >
-              {loading ? (
-                <ActivityIndicator color="#000" />
-              ) : (
-                <Text style={styles.loginButtonText}>Entrar</Text>
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={() => setModalVisible(false)}>
-              <Text style={styles.cancelText}>Cancelar</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
       <Text style={styles.footerText}>Versão 1.0.0</Text>
     </View>
   );
 }
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000', // Preto absoluto
+    backgroundColor: '#000',
     paddingHorizontal: 25,
     justifyContent: 'center',
   },
   header: {
     marginBottom: 50,
   },
-  modalOverlay: {
-  flex: 1,
-  backgroundColor: 'rgba(0,0,0,0.8)',
-  justifyContent: 'center',
-  alignItems: 'center',
-},
-modalContainer: {
-  width: '85%',
-  backgroundColor: '#111',
-  padding: 25,
-  borderRadius: 20,
-  borderWidth: 1,
-  borderColor: '#222',
-},
-modalTitle: {
-  fontSize: 22,
-  fontWeight: '700',
-  color: '#fff',
-  marginBottom: 20,
-},
-input: {
-  backgroundColor: '#1a1a1a',
-  borderRadius: 12,
-  padding: 15,
-  marginBottom: 15,
-  color: '#fff',
-  borderWidth: 1,
-  borderColor: '#222',
-},
-loginButton: {
-  backgroundColor: '#FF9500',
-  padding: 15,
-  borderRadius: 12,
-  alignItems: 'center',
-  marginBottom: 15,
-},
-loginButtonText: {
-  fontWeight: '700',
-  color: '#000',
-},
-cancelText: {
-  color: '#888',
-  textAlign: 'center',
-},
   mainTitle: {
     fontSize: 32,
     fontWeight: '800',
@@ -215,7 +95,7 @@ cancelText: {
     gap: 20,
   },
   card: {
-    backgroundColor: '#111', // Cinza muito escuro para contraste
+    backgroundColor: '#111',
     flexDirection: 'row',
     alignItems: 'center',
     padding: 20,

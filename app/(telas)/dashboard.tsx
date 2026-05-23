@@ -1,200 +1,602 @@
 import { supabase } from '@/src/lib/supabase';
+import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
+
 import React, { JSX, useEffect, useState } from 'react';
 import {
-    ActivityIndicator, Alert, FlatList,
-    ScrollView,
-    StatusBar, StyleSheet, Text, TextInput,
-    TouchableOpacity, View
+  ActivityIndicator,
+  Alert,
+  Animated,
+  FlatList,
+  Modal,
+  Platform,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 
-// Tipagem baseada nos dados reais que você enviou
-type TableType = 'motoristas_pretendentes' | 'motoristas_ativos' | 'profiles' | 'rides' | 'passageiros';
+type TableType = 'motoristas' | 'rides' | 'passageiros';
+
+type FieldConfig = {
+  key: string;
+  label: string;
+  type: 'text' | 'email' | 'numeric' | 'date' | 'boolean' | 'json';
+  editable?: boolean;
+};
+
+const tableConfigs: Record<TableType, { title: string; fields: FieldConfig[] }> = {
+  motoristas: {
+    title: 'Motoristas',
+    fields: [
+      { key: 'id', label: 'ID', type: 'text', editable: false },
+      { key: 'user_id', label: 'User ID', type: 'text', editable: false }, // Veio do auth.users
+      { key: 'nome', label: 'Nome', type: 'text' },
+      { key: 'email', label: 'Email', type: 'email' },
+      { key: 'cpf', label: 'CPF', type: 'text' },
+      { key: 'celular', label: 'Celular', type: 'text' },
+      { key: 'placa', label: 'Placa', type: 'text' },
+      { key: 'ano_carro', label: 'Ano do Carro', type: 'numeric' },
+      { key: 'modelo_carro', label: 'Modelo', type: 'text' },
+      { key: 'status', label: 'Status (pendente, aprovado, reprovado)', type: 'text' }, // Mapeia o ENUM status_motorista
+      { key: 'online', label: 'Online', type: 'boolean' },
+      { key: 'ultima_localizacao', label: 'Última Localização', type: 'json' }, // Adicionado (JSONB)
+      { key: 'created_at', label: 'Criado em', type: 'date', editable: false },
+    ]
+  },
+  passageiros: {
+    title: 'Passageiros',
+    fields: [
+      { key: 'id', label: 'ID', type: 'text', editable: false }, // É o próprio id do auth.users
+      { key: 'nome', label: 'Nome', type: 'text' },
+      { key: 'email', label: 'Email', type: 'email' },
+      { key: 'cpf', label: 'CPF', type: 'text' },
+      { key: 'celular', label: 'Celular', type: 'text' },
+      { key: 'created_at', label: 'Criado em', type: 'date', editable: false },
+    ]
+  },
+  rides: {
+    title: 'Corridas',
+    fields: [
+      { key: 'id', label: 'ID', type: 'text', editable: false },
+      { key: 'passenger_id', label: 'ID Passageiro', type: 'text' },
+      { key: 'driver_id', label: 'ID Motorista', type: 'text' },
+      { key: 'origin_text', label: 'Origem (Texto)', type: 'text' },
+      { key: 'destination_text', label: 'Destino (Texto)', type: 'text' },
+      { key: 'origin_coords', label: 'Coords Origem', type: 'json' },
+      { key: 'destination_coords', label: 'Coords Destino', type: 'json' },
+      { key: 'distancia_km', label: 'Distância (km)', type: 'numeric' },
+      { key: 'valor', label: 'Valor (R$)', type: 'numeric' },
+      { key: 'status', label: 'Status da Corrida', type: 'text' }, // Mapeia o ENUM status_corrida
+      { key: 'metodo_pagamento', label: 'Método Pagamento', type: 'text' }, // Mapeia o ENUM metodo_pagamento
+      { key: 'cancelado_por', label: 'Cancelado por', type: 'text' },
+      { key: 'motivo_cancelamento', label: 'Motivo', type: 'text' },
+      { key: 'created_at', label: 'Criado em', type: 'date', editable: false },
+      { key: 'updated_at', label: 'Atualizado em', type: 'date', editable: false }, // Adicionado
+    ]
+  },
+};
 
 export default function Dashboard(): JSX.Element {
-    const router = useRouter();
-    const [data, setData] = useState<any[]>([]);
-    const [currentTable, setCurrentTable] = useState<TableType>('motoristas_pretendentes');
-    const [loading, setLoading] = useState(true);
-    
-    // Form states (Principais para motoristas_pretendentes)
-    const [nome, setNome] = useState('');
-    const [cpf, setCpf] = useState('');
-    const [email, setEmail] = useState('');
+  const router = useRouter();
+  const [data, setData] = useState<any[]>([]);
+  const [currentTable, setCurrentTable] = useState<TableType>('motoristas');
+  const [loading, setLoading] = useState(true);
+  const [showCrudActions, setShowCrudActions] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(false);
+  const sidebarAnim = useState(new Animated.Value(-250))[0];
 
-    useEffect(() => {
-        fetchData();
-    }, [currentTable]);
+  const [isModalVisible, setIsModalVisible] = useState(false);
+  const [editingItem, setEditingItem] = useState<any>(null);
+  const [formData, setFormData] = useState<Record<string, any>>({});
 
-    async function fetchData() {
-        setLoading(true);
-        const { data: sessionData } = await supabase.auth.getSession();
-        
-        // Verifica admin
-        if (!sessionData.session || sessionData.session.user.user_metadata?.role !== 'admin') {
-            router.replace('/(auth)/loginMotorista');
-            return;
+  useEffect(() => {
+    fetchData();
+  }, [currentTable]);
+
+  useEffect(() => {
+    if (showSidebar) {
+      Animated.timing(sidebarAnim, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: false,
+      }).start();
+    } else {
+      Animated.timing(sidebarAnim, {
+        toValue: -250,
+        duration: 300,
+        useNativeDriver: false,
+      }).start();
+    }
+  }, [showSidebar]);
+
+  async function fetchData() {
+    setLoading(true);
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData.session || sessionData.session.user.user_metadata?.role !== 'admin') {
+      router.replace('/(tabs)');
+      return;
+    }
+
+    let query: any;
+
+    if (currentTable === 'rides') {
+      query = supabase.from('rides').select(`
+        *,
+        passageiros(nome),
+        motoristas(nome)
+      `);
+    } else {
+      query = supabase.from(currentTable).select('*');
+    }
+
+    const { data: result, error } = await query.order('created_at', { ascending: false });
+
+    if (error) {
+      Alert.alert('Erro', 'Não foi possível carregar os dados');
+      console.error(error);
+    } else {
+      setData(result || []);
+    }
+    setLoading(false);
+  }
+
+  function handleLogout() {
+    Alert.alert('Confirmar Saída', 'Deseja realmente sair?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Sair',
+        style: 'destructive',
+        onPress: async () => {
+          await supabase.auth.signOut();
+          await AsyncStorage.removeItem('@user_type');
+          router.replace('/(tabs)');
+        },
+      },
+    ]);
+  }
+
+  const selectTable = (tab: TableType) => {
+    setCurrentTable(tab);
+    setShowSidebar(false);
+  };
+
+  const openAddModal = () => {
+    setEditingItem(null);
+    setFormData({});
+    setIsModalVisible(true);
+  };
+
+  const openEditModal = (item: any) => {
+    const config = tableConfigs[currentTable];
+    const initialForm: Record<string, any> = {};
+    config.fields.forEach(field => {
+      let value = item[field.key];
+      if (value !== undefined) {
+        if (field.type === 'json') {
+          value = JSON.stringify(value);
+        } else if (field.type === 'date') {
+          value = new Date(value).toISOString().slice(0, 19);
+        } else if (field.type === 'boolean') {
+          value = value ? 'true' : 'false';
+        } else {
+          value = value?.toString() ?? '';
         }
+        initialForm[field.key] = value;
+      }
+    });
+    setFormData(initialForm);
+    setEditingItem(item);
+    setIsModalVisible(true);
+  };
 
-        const { data: result, error } = await supabase
-            .from(currentTable)
-            .select('*')
-            .order('created_at', { ascending: false });
+  const handleInputChange = (key: string, value: string) => {
+    setFormData(prev => ({ ...prev, [key]: value }));
+  };
 
-        if (!error) setData(result || []);
-        setLoading(false);
+  const handleSave = () => {
+    if (Object.keys(formData).length === 0) {
+      Alert.alert('Erro', 'Preencha os campos');
+      return;
     }
 
-    async function handleLogout() {
-        await supabase.auth.signOut();
-        await AsyncStorage.removeItem('@user_type');
-        router.replace('/(tabs)');
-    }
+    const title = editingItem ? 'Confirmar Atualização' : 'Confirmar Criação';
+    const message = editingItem ? 'Deseja atualizar este registro?' : 'Deseja criar este novo registro?';
 
-    async function handleSavePretendente() {
-        if (!nome || !cpf || !email) return Alert.alert('Erro', 'Preencha os campos obrigatórios');
+    Alert.alert(title, message, [
+      { text: 'Cancelar', style: 'cancel' },
+      { text: 'Confirmar', style: 'default', onPress: () => performSave() },
+    ]);
+  };
 
-        // REGRA SALVA: Verificar CPF na tabela de verificação
-        const { data: existe } = await supabase
-            .from('motoristas_pretendentes')
+  async function performSave() {
+    setLoading(true);
+    const config = tableConfigs[currentTable];
+    const payload: Record<string, any> = {};
+
+    try {
+      config.fields.forEach(field => {
+        if (field.editable !== false && formData[field.key] !== undefined) {
+          let val = formData[field.key];
+          if (field.type === 'numeric') {
+            val = parseFloat(val) || 0;
+          } else if (field.type === 'boolean') {
+            val = val.toLowerCase() === 'true';
+          } else if (field.type === 'json') {
+            val = JSON.parse(val);
+          } else if (field.type === 'date') {
+            val = new Date(val).toISOString();
+          }
+          payload[field.key] = val;
+        }
+      });
+
+      let error;
+
+      if (editingItem) {
+        ({ error } = await supabase
+          .from(currentTable)
+          .update(payload)
+          .eq('id', editingItem.id));
+        if (!error) Alert.alert('Sucesso', 'Registro atualizado!');
+      } else {
+        if (currentTable === 'motoristas') {
+          // Verifica CPF duplicado
+          const { data: existe } = await supabase
+            .from('motoristas')
             .select('cpf')
-            .eq('cpf', cpf)
-            .single();
-
-        if (existe) {
-            Alert.alert('Aviso', 'esse cpf ja esta no processo de verificação de aprovação');
+            .eq('cpf', payload.cpf)
+            .maybeSingle();
+          if (existe) {
+            Alert.alert('Aviso', 'CPF já cadastrado.');
+            setLoading(false);
             return;
+          }
+          payload.status = payload.status || 'pendente';
         }
+        ({ error } = await supabase.from(currentTable).insert([payload]));
+        if (!error) Alert.alert('Sucesso', 'Registro adicionado com sucesso!');
+      }
 
-        const { error } = await supabase.from('motoristas_pretendentes').insert([{
-            nome, cpf, email, celular: '000', placa: 'AAA-0000', ano_carro: 2000, situacao: 'pendente'
-        }]);
+      if (error) {
+        Alert.alert('Erro', error.message);
+      } else {
+        setIsModalVisible(false);
+        fetchData();
+      }
+    } catch (err) {
+      Alert.alert('Erro', 'Ocorreu um erro ao processar os dados (verifique JSON ou formatos)');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }
 
-        if (!error) {
-            Alert.alert('Sucesso', 'Cadastrado com sucesso');
-            setNome(''); setCpf(''); setEmail('');
+  async function deleteItem(id: string) {
+    Alert.alert('Confirmar Exclusão', 'Tem certeza que deseja excluir este registro?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Excluir',
+        style: 'destructive',
+        onPress: async () => {
+          const { error } = await supabase.from(currentTable).delete().eq('id', id);
+          if (!error) fetchData();
+          else Alert.alert('Erro', 'Não foi possível excluir');
+        }
+      }
+    ]);
+  }
+
+  // Aprova motorista — só atualiza o status para 'aprovado'
+  async function approveDriver(item: any) {
+    Alert.alert('Aprovar Motorista', `Aprovar ${item.nome}?`, [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Aprovar',
+        style: 'default',
+        onPress: async () => {
+          const { error } = await supabase
+            .from('motoristas')
+            .update({ status: 'aprovado' })
+            .eq('id', item.id);
+          if (!error) {
+            Alert.alert('Sucesso', 'Motorista aprovado!');
             fetchData();
+          } else {
+            Alert.alert('Erro', error.message);
+          }
         }
+      }
+    ]);
+  }
+
+  const formatValue = (item: any, field: FieldConfig) => {
+    let value = item[field.key];
+
+    // Nomes resolvidos via join do Supabase
+    if (field.key === 'passenger_id' && currentTable === 'rides') {
+      return item.passageiros?.nome ?? (value ? value.toString() : 'N/A');
+    }
+    if (field.key === 'driver_id' && currentTable === 'rides') {
+      return item.motoristas?.nome ?? (value ? value.toString() : 'N/A');
     }
 
-    async function deleteItem(id: string) {
-        Alert.alert('Confirmar', 'Excluir este registro?', [
-            { text: 'Cancelar' },
-            { text: 'Excluir', onPress: async () => {
-                const { error } = await supabase.from(currentTable).delete().eq('id', id);
-                if (!error) fetchData();
-            }}
-        ]);
-    }
+    if (value == null) return 'N/A';
+    if (field.type === 'json') return JSON.stringify(value).substring(0, 50) + '...';
+    if (field.type === 'date') return new Date(value).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+    if (field.type === 'boolean') return value ? 'Sim' : 'Não';
+    if (field.type === 'numeric') return value.toFixed(2);
+    return value.toString().substring(0, 50);
+  };
 
-    // Renderizador Inteligente: Mostra dados diferentes por tabela
-    const renderItem = ({ item }: { item: any }) => (
-        <View style={styles.card}>
-            <View style={{ flex: 1 }}>
-                {/* Nome/Título dinâmico */}
-                <Text style={styles.cardTitle}>
-                    {item.nome || item.full_name || item.username || `Corrida: ${item.id.substring(0,8)}`}
-                </Text>
-
-                {/* Detalhes dinâmicos conforme a tabela */}
-                <Text style={styles.cardInfo}>
-                    {item.cpf && `CPF: ${item.cpf}`}
-                    {item.placa && `Placa: ${item.placa}`}
-                    {item.origin_text && `De: ${item.origin_text.substring(0,20)}...`}
-                    {item.valor && `Valor: R$ ${item.valor}`}
-                </Text>
-
-                <View style={styles.statusRow}>
-                    <View style={[styles.dot, { backgroundColor: item.online || item.status === 'completed' ? '#4ade80' : '#FF9500' }]} />
-                    <Text style={styles.statusText}>
-                        {(item.situacao || item.status || (item.online ? 'Online' : 'Offline')).toUpperCase()}
-                    </Text>
-                </View>
-            </View>
-
-            <TouchableOpacity onPress={() => deleteItem(item.id)} style={styles.deleteBtn}>
-                <Text style={{ color: '#ef4444', fontWeight: 'bold', fontSize: 12 }}>EXCLUIR</Text>
+  const renderItem = ({ item }: { item: any }) => (
+    <View style={styles.card}>
+      <TouchableOpacity style={styles.cardContent} onPress={() => showCrudActions && openEditModal(item)}>
+        {tableConfigs[currentTable].fields.map((field) => (
+          <Text key={field.key} style={styles.fieldText}>
+            {field.label}: {formatValue(item, field)}
+          </Text>
+        ))}
+      </TouchableOpacity>
+      {showCrudActions && (
+        <View style={styles.actions}>
+          {currentTable === 'motoristas' && item.status !== 'aprovado' && (
+            <TouchableOpacity onPress={() => approveDriver(item)} style={styles.actionBtn}>
+              <Ionicons name="checkmark-circle" size={20} color="#22c55e" />
             </TouchableOpacity>
+          )}
+          <TouchableOpacity onPress={() => deleteItem(item.id)} style={styles.actionBtn}>
+            <Ionicons name="trash-outline" size={20} color="#ef4444" />
+          </TouchableOpacity>
         </View>
-    );
+      )}
+    </View>
+  );
 
-    return (
-        <View style={styles.container}>
-            <StatusBar style="light" />
-            
-            <View style={styles.header}>
-                <View>
-                    <Text style={styles.mainTitle}>Master Admin</Text>
-                    <Text style={styles.subtitle}>Gerenciando: {currentTable}</Text>
+  const currentConfig = tableConfigs[currentTable];
+
+  return (
+    <View style={styles.container}>
+      <Stack.Screen options={{ headerShown: false }} />
+      <StatusBar barStyle="light-content" backgroundColor="#000" />
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => setShowSidebar(true)}>
+          <Ionicons name="menu-outline" size={30} color="#fff" />
+        </TouchableOpacity>
+        <View style={{ flex: 1, alignItems: 'center' }}>
+          <Text style={styles.mainTitle}>Master Admin</Text>
+          <Text style={styles.subtitle}>{currentConfig.title}</Text>
+        </View>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={[styles.crudBtn, showCrudActions && styles.crudBtnActive]}
+            onPress={() => setShowCrudActions(!showCrudActions)}
+          >
+            <Ionicons name="settings-outline" size={26} color={showCrudActions ? '#000' : '#fff'} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.profileBtn} onPress={handleLogout}>
+            <Ionicons name="log-out-outline" size={26} color="#fff" />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {loading ? (
+        <ActivityIndicator size="large" color="#FF9500" style={styles.loader} />
+      ) : (
+        <FlatList
+          data={data}
+          keyExtractor={(item) => item.id}
+          renderItem={renderItem}
+          contentContainerStyle={styles.listContent}
+          ListEmptyComponent={
+            <Text style={styles.emptyText}>Nenhum registro encontrado nesta tabela.</Text>
+          }
+        />
+      )}
+
+      {showCrudActions && (
+        <TouchableOpacity style={styles.fab} onPress={openAddModal}>
+          <Ionicons name="add" size={32} color="#000" />
+        </TouchableOpacity>
+      )}
+
+      <Animated.View style={[styles.sidebar, { left: sidebarAnim }]}>
+        <View style={styles.sidebarHeader}>
+          <Text style={styles.sidebarTitle}>Selecionar Tabela</Text>
+          <TouchableOpacity onPress={() => setShowSidebar(false)}>
+            <Ionicons name="close" size={28} color="#fff" />
+          </TouchableOpacity>
+        </View>
+        {Object.keys(tableConfigs).map((tab) => (
+          <TouchableOpacity
+            key={tab}
+            onPress={() => selectTable(tab as TableType)}
+            style={styles.sidebarItem}
+          >
+            <Text style={styles.sidebarItemText}>
+              {tab.replace('_', ' ').toUpperCase()}
+            </Text>
+          </TouchableOpacity>
+        ))}
+       
+      </Animated.View>
+      
+ <ScrollView style={styles.debugContainer}>
+  <Text style={styles.debugTitle}>🐞 DEBUG - Dados da Tabela ({currentTable})</Text>
+  <Text style={styles.debugText}>
+    {data && data.length > 0 
+      ? JSON.stringify(data, null, 2) 
+      : "Nenhum dado encontrado ou array vazio []"}
+  </Text>
+</ScrollView>
+      <Modal
+        visible={isModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setIsModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>
+              {editingItem ? 'Editar Registro' : `Novo registro`}
+            </Text>
+            <ScrollView>
+              {currentConfig.fields.filter(field => field.editable !== false).map((field) => (
+                <View key={field.key} style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>{field.label}</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder={field.label}
+                    placeholderTextColor="#666"
+                    value={formData[field.key]?.toString() || ''}
+                    onChangeText={(text) => handleInputChange(field.key, text)}
+                    keyboardType={
+                      field.type === 'numeric' ? 'numeric' :
+                      field.type === 'email' ? 'email-address' :
+                      'default'
+                    }
+                    autoCapitalize="none"
+                  />
                 </View>
-                <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
-                    <Text style={{ color: '#fff', fontSize: 12 }}>SAIR</Text>
-                </TouchableOpacity>
-            </View>
-
-            {/* Menu de Tabelas (Horizontal) */}
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabsHolder}>
-                {(['motoristas_pretendentes', 'motoristas_ativos', 'passageiros', 'rides', 'profiles'] as TableType[]).map(tab => (
-                    <TouchableOpacity 
-                        key={tab} 
-                        onPress={() => setCurrentTable(tab)}
-                        style={[styles.tab, currentTable === tab && styles.tabActive]}
-                    >
-                        <Text style={[styles.tabText, currentTable === tab && { color: '#000' }]}>
-                            {tab.replace('_', ' ').toUpperCase()}
-                        </Text>
-                    </TouchableOpacity>
-                ))}
+              ))}
             </ScrollView>
-
-            {/* Form de Cadastro Rápido (Apenas para pretendentes) */}
-            {currentTable === 'motoristas_pretendentes' && (
-                <View style={styles.form}>
-                    <TextInput placeholder="Nome" value={nome} onChangeText={setNome} placeholderTextColor="#666" style={styles.input} />
-                    <TextInput placeholder="CPF" value={cpf} onChangeText={setCpf} placeholderTextColor="#666" style={styles.input} keyboardType="numeric" />
-                    <TextInput placeholder="Email" value={email} onChangeText={setEmail} placeholderTextColor="#666" style={styles.input} autoCapitalize="none" />
-                    <TouchableOpacity onPress={handleSavePretendente} style={styles.saveBtn}>
-                        <Text style={styles.saveBtnText}>ADICIONAR PRETENDENTE</Text>
-                    </TouchableOpacity>
-                </View>
-            )}
-
-            {loading ? (
-                <ActivityIndicator size="large" color="#FF9500" style={{ marginTop: 40 }} />
-            ) : (
-                <FlatList
-                    data={data}
-                    keyExtractor={item => item.id}
-                    renderItem={renderItem}
-                    contentContainerStyle={{ paddingBottom: 40 }}
-                    ListEmptyComponent={<Text style={styles.empty}>Nenhum registro encontrado.</Text>}
-                />
-            )}
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => setIsModalVisible(false)}>
+                <Text style={styles.cancelBtnText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
+                <Text style={styles.saveBtnText}>
+                  {editingItem ? 'ATUALIZAR' : 'SALVAR'}
+                </Text>
+              </TouchableOpacity>
+              
+            </View>
+          </View>
         </View>
-    );
+      </Modal>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#000', paddingHorizontal: 20, paddingTop: 60 },
-    header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-    mainTitle: { fontSize: 28, fontWeight: '800', color: '#fff', letterSpacing: -1 },
-    subtitle: { fontSize: 14, color: '#FF9500', fontWeight: '600' },
-    logoutBtn: { backgroundColor: '#1a1a1a', padding: 10, borderRadius: 10, borderWidth: 1, borderColor: '#333' },
-    tabsHolder: { maxHeight: 45, marginBottom: 20 },
-    tab: { paddingHorizontal: 15, paddingVertical: 8, borderRadius: 12, backgroundColor: '#111', marginRight: 10, height: 35, borderWidth: 1, borderColor: '#222' },
-    tabActive: { backgroundColor: '#FF9500', borderColor: '#FF9500' },
-    tabText: { color: '#666', fontWeight: '700', fontSize: 11 },
-    form: { backgroundColor: '#111', padding: 15, borderRadius: 20, borderWidth: 1, borderColor: '#222', marginBottom: 20 },
-    input: { backgroundColor: '#1a1a1a', borderRadius: 10, padding: 12, color: '#fff', marginBottom: 10, borderWidth: 1, borderColor: '#222' },
-    saveBtn: { backgroundColor: '#FF9500', padding: 15, borderRadius: 12, alignItems: 'center' },
-    saveBtnText: { fontWeight: '800', color: '#000', fontSize: 12 },
-    card: { backgroundColor: '#111', padding: 18, borderRadius: 20, marginBottom: 12, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#222' },
-    cardTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
-    cardInfo: { color: '#888', fontSize: 13, marginTop: 4 },
-    statusRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
-    dot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
-    statusText: { color: '#fff', fontSize: 10, fontWeight: '800' },
-    deleteBtn: { padding: 10 },
-    empty: { color: '#444', textAlign: 'center', marginTop: 50, fontWeight: '600' }
+
+  debugContainer: {
+  backgroundColor: '#1c1c1e',
+  borderWidth: 2,
+  borderColor: '#ff9500', // Cor laranja para chamar atenção
+  borderRadius: 8,
+  padding: 10,
+  margin: 15,
+  maxHeight: 250, // Segura o tamanho para não cobrir a tela toda
+},
+debugTitle: {
+  color: '#ff9500',
+  fontWeight: 'bold',
+  fontSize: 14,
+  marginBottom: 5,
+},
+debugText: {
+  color: '#00ff00', // Texto verde estilo terminal hacker
+  fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  fontSize: 12,
+},
+  container: { flex: 1, backgroundColor: '#000' },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 60,
+    paddingBottom: 20
+  },
+  headerActions: { flexDirection: 'row', gap: 12 },
+  crudBtn: { padding: 8, borderRadius: 12, backgroundColor: '#1f1f1f' },
+  crudBtnActive: { backgroundColor: '#FF9500' },
+  mainTitle: { fontSize: 28, fontWeight: '800', color: '#fff', letterSpacing: -1 },
+  subtitle: { fontSize: 14, color: '#FF9500', fontWeight: '600', marginTop: 2 },
+  profileBtn: { padding: 8, borderRadius: 12, backgroundColor: '#1f1f1f' },
+  card: {
+    backgroundColor: '#111',
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderRadius: 16,
+    padding: 10,
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: '#222',
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.15, shadowRadius: 3 },
+      android: { elevation: 2 },
+    }),
+  },
+  cardContent: { flex: 1 },
+  fieldText: { fontSize: 12, color: '#ddd', lineHeight: 16 },
+  actions: { flexDirection: 'column', justifyContent: 'flex-start', gap: 6 },
+  actionBtn: { padding: 4 },
+  fab: {
+    position: 'absolute',
+    bottom: 30,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#FF9500',
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 6,
+  },
+  listContent: { paddingBottom: 100 },
+  loader: { marginTop: 80 },
+  emptyText: { textAlign: 'center', color: '#555', marginTop: 80, fontSize: 16 },
+  sidebar: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 250,
+    backgroundColor: '#111',
+    paddingTop: 60,
+    borderRightWidth: 1,
+    borderRightColor: '#222',
+    zIndex: 10,
+  },
+  sidebarHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#222',
+  },
+  sidebarTitle: { fontSize: 20, fontWeight: '700', color: '#fff' },
+  sidebarItem: { padding: 16, borderBottomWidth: 1, borderBottomColor: '#222' },
+  sidebarItemText: { color: '#ddd', fontSize: 16, fontWeight: '600' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'flex-end' },
+  modalContent: {
+    backgroundColor: '#111',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    padding: 24,
+    maxHeight: '85%',
+  },
+  modalTitle: { fontSize: 24, fontWeight: '700', color: '#fff', marginBottom: 24, textAlign: 'center' },
+  inputGroup: { marginBottom: 16 },
+  inputLabel: { color: '#888', fontSize: 13, fontWeight: '600', marginBottom: 6 },
+  modalInput: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 14,
+    padding: 14,
+    color: '#fff',
+    fontSize: 15,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  modalActions: { flexDirection: 'row', gap: 12, marginTop: 24 },
+  cancelBtn: { flex: 1, paddingVertical: 16, borderRadius: 14, backgroundColor: '#222', alignItems: 'center' },
+  cancelBtnText: { color: '#ccc', fontWeight: '700' },
+  saveBtn: { flex: 1, paddingVertical: 16, borderRadius: 14, backgroundColor: '#FF9500', alignItems: 'center' },
+  saveBtnText: { color: '#000', fontWeight: '800', fontSize: 16 },
 });

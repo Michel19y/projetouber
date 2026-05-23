@@ -36,10 +36,10 @@ export default function RegisterPassageiro() {
       // 1. REGRA DE NEGÓCIO: Verificação de CPF em análise (da memória salva)
       // Se o usuário tenta cadastrar com CPF que já está sendo verificado
       const { data: existente } = await supabase
-        .from('motoristas_pretendentes')
-        .select('cpf')
-        .eq('cpf', cpfLimpo)
-        .maybeSingle();
+  .from('motoristas')
+  .select('cpf')
+  .eq('cpf', cpfLimpo)
+  .maybeSingle();
 
       if (existente) {
         // Mensagem exata solicitada conforme os requisitos salvos
@@ -55,8 +55,10 @@ export default function RegisterPassageiro() {
         options: { 
           data: { 
             full_name: nome, 
-            type: 'passageiro' 
-          } 
+            type: 'passageiro' ,
+         
+          } ,
+             emailRedirectTo: undefined // remove o envio de email
         }
       });
 

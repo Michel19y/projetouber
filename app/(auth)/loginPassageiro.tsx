@@ -19,11 +19,13 @@ export default function LoginPassegeiro() {
     setLoading(true);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
 
+
     if (error) {
       Alert.alert('Erro no Login', 'E-mail ou senha incorretos. Verifique seus dados.');
       setLoading(false);
     } else {
-      router.replace('/(tabs)'); 
+     // ✅ Correto
+router.replace('/passageiroLogado');
     }
   }
 

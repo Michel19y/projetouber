@@ -17,6 +17,7 @@ import {
     View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { decodePolyline, mapsApi, ridesApi } from '../../src/lib/api';
 import { supabase } from '../../src/lib/supabase';
 
 let MapView: any, Marker: any, Polyline: any, PROVIDER_DEFAULT: any;
@@ -33,7 +34,7 @@ const { width, height } = Dimensions.get('window');
 export default function TelaHomePassageiro() {
     const insets = useSafeAreaInsets();
     const router = useRouter();
-    
+
     const [nome, setNome] = useState<string | null>("Passageiro");
     const [loading, setLoading] = useState(true);
     const [location, setLocation] = useState<any>(null);
@@ -44,14 +45,14 @@ export default function TelaHomePassageiro() {
     const [preco, setPreco] = useState<string | null>(null);
     const [searchText, setSearchText] = useState('');
     const [buscando, setBuscando] = useState(false);
-    
-    // Estados do Fluxo de Corrida
+
     const [metodoPagamento, setMetodoPagamento] = useState<'dinheiro' | 'pix'>('dinheiro');
     const [aguardandoMotorista, setAguardandoMotorista] = useState(false);
     const [idCorridaAtual, setIdCorridaAtual] = useState<string | null>(null);
+    const [confirmandoCorrida, setConfirmandoCorrida] = useState(false);
 
     const mapRef = useRef<any>(null);
-    const searchTimer = useRef<NodeJS.Timeout | null>(null);
+    const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => {
         (async () => {
@@ -77,101 +78,100 @@ export default function TelaHomePassageiro() {
         })();
     }, []);
 
+    // ✅ FIX: Limpa o timer ao desmontar o componente (evita chamadas após logout)
+    useEffect(() => {
+        return () => {
+            if (searchTimer.current) clearTimeout(searchTimer.current);
+        };
+    }, []);
+
     const handleLogout = async () => {
+        if (searchTimer.current) clearTimeout(searchTimer.current);
         await supabase.auth.signOut();
         await AsyncStorage.removeItem('@user_type');
         router.replace('/(tabs)');
     };
 
-    // Converte coordenadas em texto para o banco de dados
-    const getAddressName = async (lat: number, lng: number) => {
-        try {
-            const r = await fetch(`https://photon.komoot.io/reverse?lon=${lng}&lat=${lat}`);
-            const d = await r.json();
-            return d.features[0]?.properties.name || "Endereço selecionado";
-        } catch { return "Endereço via Mapa"; }
-    };
+    const buscarEnderecos = (texto: string) => {
+        if (searchTimer.current) clearTimeout(searchTimer.current);
+        searchTimer.current = setTimeout(async () => {
+            // ✅ FIX: Verifica sessão antes de chamar o backend
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) return;
 
-    function decodePolyline(encoded: string) {
-        let points = [];
-        let index = 0, len = encoded.length;
-        let lat = 0, lng = 0;
-        while (index < len) {
-            let b, shift = 0, result = 0;
-            do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
-            let dlat = ((result & 1) ? ~(result >> 1) : (result >> 1)); lat += dlat;
-            shift = 0; result = 0;
-            do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
-            let dlng = ((result & 1) ? ~(result >> 1) : (result >> 1)); lng += dlng;
-            points.push({ latitude: (lat / 1E5), longitude: (lng / 1E5) });
-        }
-        return points;
-    }
+            if (texto.length > 2 && location) {
+                try {
+                    const data = await mapsApi.geocode(texto, location.latitude, location.longitude);
+                    setResults(data.results || []);
+                } catch (e) {
+                    console.error('Erro ao buscar endereços:', e);
+                }
+            } else {
+                setResults([]);
+            }
+        }, 300);
+    };
 
     const calcularRota = async (origem: any, destino: any) => {
         try {
-            const url = `https://router.project-osrm.org/route/v1/driving/${origem.longitude},${origem.latitude};${destino.longitude},${destino.latitude}?overview=full&geometries=polyline`;
-            const response = await fetch(url);
-            const data = await response.json();
-            if (data?.routes?.length > 0) {
-                const route = data.routes[0];
-                const decoded = decodePolyline(route.geometry);
-                setRouteCoords(decoded);
-                const distKm = route.distance / 1000;
-                setDistancia(distKm.toFixed(1) + " km");
-                setPreco(((distKm * 2.80) + 5).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
-                mapRef.current?.fitToCoordinates(decoded, { edgePadding: { top: 100, right: 50, bottom: 400, left: 50 }, animated: true });
-            }
-        } catch (e) { console.error(e); }
+            const data = await mapsApi.rota(
+                origem.latitude, origem.longitude,
+                destino.lat, destino.lng
+            );
+            const decoded = decodePolyline(data.geometry);
+            setRouteCoords(decoded);
+            setDistancia(data.distanciaFormatada);
+            setPreco('Calculando...');
+
+            mapRef.current?.fitToCoordinates(decoded, {
+                edgePadding: { top: 100, right: 50, bottom: 400, left: 50 },
+                animated: true,
+            });
+        } catch (e) {
+            console.error('Erro ao calcular rota:', e);
+        }
     };
 
     const handleConfirm = async () => {
-        if (!location || !destination || !preco) return;
-        setLoading(true);
+        if (!location || !destination) return;
+
+        setConfirmandoCorrida(true);
         try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) throw new Error("Sessão expirada");
-
-            const originText = await getAddressName(location.latitude, location.longitude);
-            const destText = searchText || await getAddressName(destination.latitude, destination.longitude);
-            const valorNumeric = parseFloat(preco.replace('R$', '').replace(/\./g, '').replace(',', '.').trim());
-
-            const { data, error } = await supabase.from('rides').insert([{
-                passenger_id: session.user.id,
-                origin_text: originText,
-                destination_text: destText,
+            const response = await ridesApi.solicitar({
                 origin_coords: { lat: location.latitude, lng: location.longitude },
-                destination_coords: { lat: destination.latitude, lng: destination.longitude },
-                distancia: distancia,
-                valor: valorNumeric,
-                status: 'pendente',
-                metodo_pagamento: metodoPagamento
-            }]).select().single();
+                destination_coords: { lat: destination.lat, lng: destination.lng },
+                metodo_pagamento: metodoPagamento,
+                destination_text: searchText || undefined,
+            });
 
-            if (error) throw error;
-            
-            setIdCorridaAtual(data.id);
+            setPreco(response.ride.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
+            setDistancia(response.ride.distancia);
+            setIdCorridaAtual(response.ride.id);
             setAguardandoMotorista(true);
         } catch (err: any) {
-            Alert.alert('Erro no envio', err.message || 'Verifique sua conexão.');
+            Alert.alert('Erro', err.message || 'Verifique sua conexão e tente novamente.');
         } finally {
-            setLoading(false);
+            setConfirmandoCorrida(false);
         }
     };
 
     const handleCancelar = async () => {
         if (!idCorridaAtual) return;
         try {
-            await supabase.from('rides').update({ status: 'cancelado' }).eq('id', idCorridaAtual);
+            await ridesApi.cancelar(idCorridaAtual);
             setAguardandoMotorista(false);
             setIdCorridaAtual(null);
             setDestination(null);
             setRouteCoords([]);
             setSearchText('');
-        } catch (e) { Alert.alert("Erro", "Erro ao cancelar."); }
+            setPreco(null);
+            setDistancia(null);
+        } catch (e: any) {
+            Alert.alert("Erro", e.message || "Erro ao cancelar.");
+        }
     };
 
-    if (loading && !aguardandoMotorista && !location) {
+    if (loading && !location) {
         return <View style={styles.containerCenter}><ActivityIndicator size="large" color="#34C759" /></View>;
     }
 
@@ -197,11 +197,17 @@ export default function TelaHomePassageiro() {
                         <View style={styles.userMarker}><View style={styles.userMarkerInner} /></View>
                     </Marker>
                 )}
-                {destination && <Marker coordinate={destination} pinColor="#FF3B30" />}
-                {routeCoords.length > 0 && <Polyline coordinates={routeCoords} strokeWidth={4} strokeColor="#007AFF" />}
+                {destination && (
+                    <Marker
+                        coordinate={{ latitude: destination.lat, longitude: destination.lng }}
+                        pinColor="#FF3B30"
+                    />
+                )}
+                {routeCoords.length > 0 && (
+                    <Polyline coordinates={routeCoords} strokeWidth={4} strokeColor="#007AFF" />
+                )}
             </MapView>
 
-            {/* HEADER COM LOGOUT E BUSCA */}
             {!aguardandoMotorista && (
                 <View style={[styles.topContainer, { top: insets.top + 10 }]}>
                     <View style={styles.headerRow}>
@@ -215,7 +221,7 @@ export default function TelaHomePassageiro() {
                     </View>
 
                     <View style={styles.searchBar}>
-                        <Ionicons name="search" size={20} color="#666" style={{marginLeft: 15}} />
+                        <Ionicons name="search" size={20} color="#666" style={{ marginLeft: 15 }} />
                         <TextInput
                             style={styles.searchInput}
                             placeholder="Pesquisar destino..."
@@ -223,31 +229,30 @@ export default function TelaHomePassageiro() {
                             value={searchText}
                             onChangeText={(t) => {
                                 setSearchText(t);
-                                if (searchTimer.current) clearTimeout(searchTimer.current);
-                                searchTimer.current = setTimeout(() => {
-                                    if (t.length > 2) {
-                                        fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(t)}&lat=${location.latitude}&lon=${location.longitude}&limit=5`)
-                                            .then(r => r.json())
-                                            .then(d => { if (d.features) setResults(d.features); });
-                                    } else { setResults([]); }
-                                }, 300);
+                                buscarEnderecos(t);
                             }}
                             onFocus={() => setBuscando(true)}
                         />
                     </View>
+
                     {buscando && results.length > 0 && (
                         <View style={styles.resultsList}>
                             <ScrollView keyboardShouldPersistTaps="handled">
                                 {results.map((item: any, i) => (
-                                    <TouchableOpacity key={i} style={styles.resultItem} onPress={() => {
-                                        const d = { latitude: item.geometry.coordinates[1], longitude: item.geometry.coordinates[0] };
-                                        setDestination(d);
-                                        setBuscando(false);
-                                        setSearchText(item.properties.name);
-                                        calcularRota(location, d);
-                                    }}>
+                                    <TouchableOpacity
+                                        key={i}
+                                        style={styles.resultItem}
+                                        onPress={() => {
+                                            const dest = { lat: item.lat, lng: item.lng };
+                                            setDestination(dest);
+                                            setBuscando(false);
+                                            setSearchText(item.nome);
+                                            setResults([]);
+                                            calcularRota(location, dest);
+                                        }}
+                                    >
                                         <Text style={styles.resultText} numberOfLines={1}>
-                                            {item.properties.name} {item.properties.city ? `- ${item.properties.city}` : ''}
+                                            {item.nome} {item.cidade ? `- ${item.cidade}` : ''}
                                         </Text>
                                     </TouchableOpacity>
                                 ))}
@@ -257,12 +262,14 @@ export default function TelaHomePassageiro() {
                 </View>
             )}
 
-            {/* CARD INFERIOR DINÂMICO */}
             <View style={[styles.bottomCard, { paddingBottom: insets.bottom + 20 }]}>
                 {aguardandoMotorista ? (
                     <View style={styles.waitingBox}>
                         <ActivityIndicator size="large" color="#34C759" />
                         <Text style={styles.waitingText}>Procurando motoristas...</Text>
+                        <Text style={styles.waitingSubtext}>
+                            Valor confirmado: {preco} • {distancia}
+                        </Text>
                         <TouchableOpacity style={styles.cancelBtn} onPress={handleCancelar}>
                             <Text style={styles.cancelBtnText}>CANCELAR CORRIDA</Text>
                         </TouchableOpacity>
@@ -270,24 +277,28 @@ export default function TelaHomePassageiro() {
                 ) : destination ? (
                     <>
                         <View style={styles.estimateBox}>
-                            <View style={styles.carIconBox}><Ionicons name="car-sport" size={24} color="#fff" /></View>
-                            <View style={{marginLeft: 12, flex: 1}}>
-                                <Text style={styles.carType}>Drive E Econômico</Text>
-                                <Text style={styles.carTime}>{distancia} • {metodoPagamento.toUpperCase()}</Text>
+                            <View style={styles.carIconBox}>
+                                <Ionicons name="car-sport" size={24} color="#fff" />
                             </View>
-                            <Text style={styles.price}>{preco}</Text>
+                            <View style={{ marginLeft: 12, flex: 1 }}>
+                                <Text style={styles.carType}>Drive E Econômico</Text>
+                                <Text style={styles.carTime}>
+                                    {distancia} • {metodoPagamento.toUpperCase()}
+                                </Text>
+                            </View>
+                            <Text style={styles.price}>{preco || '...'}</Text>
                         </View>
 
                         <View style={styles.paymentRow}>
-                            <TouchableOpacity 
-                                style={[styles.payBtn, metodoPagamento === 'dinheiro' && styles.payBtnActive]} 
+                            <TouchableOpacity
+                                style={[styles.payBtn, metodoPagamento === 'dinheiro' && styles.payBtnActive]}
                                 onPress={() => setMetodoPagamento('dinheiro')}
                             >
                                 <Ionicons name="cash-outline" size={18} color={metodoPagamento === 'dinheiro' ? "#000" : "#fff"} />
                                 <Text style={[styles.payTxt, metodoPagamento === 'dinheiro' && styles.payTxtActive]}>Dinheiro</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity 
-                                style={[styles.payBtn, metodoPagamento === 'pix' && styles.payBtnActive]} 
+                            <TouchableOpacity
+                                style={[styles.payBtn, metodoPagamento === 'pix' && styles.payBtnActive]}
                                 onPress={() => setMetodoPagamento('pix')}
                             >
                                 <Ionicons name="qr-code-outline" size={18} color={metodoPagamento === 'pix' ? "#000" : "#fff"} />
@@ -295,8 +306,15 @@ export default function TelaHomePassageiro() {
                             </TouchableOpacity>
                         </View>
 
-                        <TouchableOpacity style={styles.confirmBtn} onPress={handleConfirm} disabled={loading}>
-                            {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.confirmBtnText}>SOLICITAR DRIVE E</Text>}
+                        <TouchableOpacity
+                            style={styles.confirmBtn}
+                            onPress={handleConfirm}
+                            disabled={confirmandoCorrida}
+                        >
+                            {confirmandoCorrida
+                                ? <ActivityIndicator color="#000" />
+                                : <Text style={styles.confirmBtnText}>SOLICITAR DRIVE E</Text>
+                            }
                         </TouchableOpacity>
                     </>
                 ) : (
@@ -310,7 +328,7 @@ export default function TelaHomePassageiro() {
     );
 }
 
-const mapDarkStyle = [ { "elementType": "geometry", "stylers": [ { "color": "#212121" } ] }, { "elementType": "labels.icon", "stylers": [ { "visibility": "off" } ] } ];
+const mapDarkStyle = [{ "elementType": "geometry", "stylers": [{ "color": "#212121" }] }, { "elementType": "labels.icon", "stylers": [{ "visibility": "off" }] }];
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#000' },
@@ -341,10 +359,11 @@ const styles = StyleSheet.create({
     confirmBtnText: { color: '#000', fontWeight: 'bold', fontSize: 16 },
     waitingBox: { alignItems: 'center', paddingVertical: 15 },
     waitingText: { color: '#fff', fontSize: 17, fontWeight: 'bold', marginTop: 15 },
+    waitingSubtext: { color: '#555', fontSize: 13, marginTop: 8 },
     cancelBtn: { marginTop: 20 },
     cancelBtnText: { color: '#FF3B30', fontWeight: 'bold' },
     emptyFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
     emptyText: { color: '#666', fontSize: 15 },
     userMarker: { width: 22, height: 22, backgroundColor: 'rgba(0, 122, 255, 0.2)', borderRadius: 11, justifyContent: 'center', alignItems: 'center' },
-    userMarkerInner: { width: 10, height: 10, backgroundColor: '#007AFF', borderRadius: 5, borderWidth: 2, borderColor: '#fff' }
+    userMarkerInner: { width: 10, height: 10, backgroundColor: '#007AFF', borderRadius: 5, borderWidth: 2, borderColor: '#fff' },
 });

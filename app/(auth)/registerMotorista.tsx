@@ -69,7 +69,7 @@ export default function RegisterMotorista() {
 
     try {
       const { data: existente } = await supabase
-        .from('motoristas_pretendentes')
+        .from('motoristas')
         .select('cpf')
         .eq('cpf', cpfLimpo)
         .maybeSingle();
@@ -89,11 +89,11 @@ export default function RegisterMotorista() {
       if (authError) throw authError;
 
       const { error: dbError } = await supabase
-        .from('motoristas_pretendentes')
+        .from('motoristas')
         .insert([{ 
           user_id: authData.user?.id, 
           nome, email, cpf: cpfLimpo, celular, 
-          placa: placa.toUpperCase(), ano_carro: ano, situacao: 'pendente' 
+         placa: placa.toUpperCase(), ano_carro: ano, status: 'pendente'
         }]);
 
       if (dbError) throw dbError;
