@@ -15,7 +15,7 @@ import {
   View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { supabase } from '../../src/lib/supabase';
+import { api } from '../../src/lib/api'; // Garanta que o caminho aponta para o seu arquivo de api unificado
 
 const InputField = ({ icon, ...props }: any) => (
   <View style={styles.inputWrapper}>
@@ -27,7 +27,6 @@ const InputField = ({ icon, ...props }: any) => (
 export default function RegisterMotorista() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  
   const [nome, setNome] = useState('');
   const [email, setEmail] = useState('');
   const [cpf, setCpf] = useState('');
@@ -37,7 +36,7 @@ export default function RegisterMotorista() {
   const [anoCarro, setAnoCarro] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // --- VALIDAÇÕES MANTIDAS ---
+  // --- VALIDAÇÕES DE CPF ---
   const validarCPF = (cpf: string) => {
     const cleanCPF = cpf.replace(/\D/g, '');
     if (cleanCPF.length !== 11 || !!cleanCPF.match(/(\d)\1{10}/)) return false;
@@ -58,51 +57,38 @@ export default function RegisterMotorista() {
     const cpfLimpo = cpf.replace(/\D/g, '');
     const ano = parseInt(anoCarro);
 
+    // Validações rápidas de interface (UX)
     if (!email || !password || !nome || !placa || !anoCarro || !cpfLimpo) {
       Alert.alert('Campos incompletos', 'Preencha todos os dados.');
       return;
     }
 
-    if (!validarCPF(cpfLimpo)) return Alert.alert('CPF inválido', 'O número de CPF informado não é real.');
+    if (!validarCPF(cpfLimpo)) {
+      Alert.alert('CPF inválido', 'O número de CPF informado não é real.');
+      return;
+    }
     
     setLoading(true);
 
     try {
-      const { data: existente } = await supabase
-        .from('motoristas')
-        .select('cpf')
-        .eq('cpf', cpfLimpo)
-        .maybeSingle();
-
-      if (existente) {
-        Alert.alert('Aviso', 'esse cpf ja esta no processo de verificação de aprovaãop');
-        setLoading(false);
-        return;
-      }
-
-      const { data: authData, error: authError } = await supabase.auth.signUp({
+      // 🚀 Chamada segura apontando para o seu objeto envelopado de autenticação pública
+      await api.auth.registerMotorista({
         email,
         password,
-        options: { data: { full_name: nome, type: 'motorista' } }
+        nome,
+        placa,
+        anoCarro: ano,
+        cpfLimpo,
+        celular
       });
 
-      if (authError) throw authError;
-
-      const { error: dbError } = await supabase
-        .from('motoristas')
-        .insert([{ 
-          user_id: authData.user?.id, 
-          nome, email, cpf: cpfLimpo, celular, 
-         placa: placa.toUpperCase(), ano_carro: ano, status: 'pendente'
-        }]);
-
-      if (dbError) throw dbError;
-
+      // Se o fetch passou sem rejeitar a Promise, o status é de sucesso!
       Alert.alert('Sucesso!', 'Dados enviados para análise.');
       router.replace('/(auth)/loginMotorista');
 
     } catch (err: any) {
-      Alert.alert('Erro no cadastro', err.message);
+      // O seu `apiRequest` captura o erro e monta a String direto na propriedade `message`
+      Alert.alert('Aviso', err.message || 'Erro inesperado no servidor.');
     } finally {
       setLoading(false);
     }
@@ -112,7 +98,7 @@ export default function RegisterMotorista() {
     <View style={[styles.mainContainer, { paddingTop: insets.top }]}>
       <StatusBar style="light" />
       
-      {/* MANTÉM A SETA DE VOLTAR ESTILIZADA */}
+      {/* Seta de voltar nativa estilizada */}
       <Stack.Screen 
         options={{ 
           headerShown: true, 
@@ -126,13 +112,13 @@ export default function RegisterMotorista() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
         style={{ flex: 1 }}
       >
-        {/* HEADER FIXO (Não rola) */}
+        {/* HEADER FIXO */}
         <View style={styles.fixedHeader}>
           <Text style={styles.title}>Seja um parceiro</Text>
           <Text style={styles.subtitle}>Preencha os dados para análise.</Text>
         </View>
 
-        {/* ÁREA DE SCROLL (Apenas os campos) */}
+        {/* ÁREA DE SCROLL */}
         <ScrollView 
           style={styles.scrollArea}
           contentContainerStyle={styles.scrollContent}
@@ -149,11 +135,10 @@ export default function RegisterMotorista() {
           <InputField icon="car-outline" placeholder="Placa" value={placa} onChangeText={setPlaca} autoCapitalize="characters" maxLength={7} />
           <InputField icon="calendar-outline" placeholder="Ano do Carro" value={anoCarro} onChangeText={setAnoCarro} keyboardType="numeric" maxLength={4} />
           
-          {/* Espaçamento extra para o scroll não bater no botão fixo */}
           <View style={{ height: 20 }} />
         </ScrollView>
 
-        {/* FOOTER FIXO (Sempre visível no fundo) */}
+        {/* FOOTER FIXO */}
         <View style={[styles.fixedFooter, { paddingBottom: insets.bottom + 15 }]}>
           <TouchableOpacity 
             style={styles.button} 
@@ -196,7 +181,7 @@ const styles = StyleSheet.create({
   fixedFooter: { 
     paddingHorizontal: 25, 
     paddingTop: 15, 
-    backgroundColor: '#000', // Fundo sólido para não ver o texto atrás
+    backgroundColor: '#000', 
     borderTopWidth: 1, 
     borderTopColor: '#111' 
   },

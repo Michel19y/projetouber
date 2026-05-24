@@ -11,7 +11,7 @@ import { supabase } from './supabase';
 //
 // Em produção: substitua pela URL do seu servidor hospedado.
 // ============================================================
-const BACKEND_URL = 'http://192.168.0.2:3001'; // IP da máquina na rede local
+const BACKEND_URL = 'http://192.168.0.3:3001'; // IP da máquina na rede local
 
 // ============================================================
 // Cliente HTTP principal
@@ -23,7 +23,8 @@ async function apiRequest(
   method: 'GET' | 'POST' | 'PUT' | 'DELETE',
   path: string,
   body?: object,
-  queryParams?: Record<string, string>
+  queryParams?: Record<string, string>, // O 4º argumento (opcional)
+  isPublic: boolean = false             // 👈 Certifique-se de que o 5º argumento está exatamente assim!
 ): Promise<any> {
   // 1. Pega o token da sessão atual do Supabase
   const { data: { session } } = await supabase.auth.getSession();
@@ -176,7 +177,34 @@ export function decodePolyline(encoded: string): { latitude: number; longitude: 
     lng += dlng;
 
     points.push({ latitude: lat / 1e5, longitude: lng / 1e5 });
+
+    
   }
 
   return points;
+
+  
 }
+
+// ============================================================
+// API de Autenticação / Cadastro
+// ============================================================
+
+
+export const authApi = {
+  registerMotorista: (params: any) => 
+    apiRequest('POST', '/api/auth/register-motorista', params, undefined, true),
+
+  // 🟢 ADICIONE ESTA LINHA AQUI:
+  loginMotorista: (params: any) => 
+    apiRequest('POST', '/api/auth/login-motorista', params, undefined, true),
+};
+
+// No final do arquivo, agrupa e exporta tudo junto:
+export const api = {
+  rides: ridesApi,
+  auth: authApi,
+  maps: mapsApi,
+  decodePolyline
+};
+

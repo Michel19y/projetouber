@@ -1,10 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage'; // 👈 Adicionado para salvar a memória do tipo de perfil
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { supabase } from '../../src/lib/supabase';
 
-export default function LoginPassegeiro() {
+export default function LoginPassageiro() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -17,15 +18,26 @@ export default function LoginPassegeiro() {
     }
 
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
 
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
 
-    if (error) {
-      Alert.alert('Erro no Login', 'E-mail ou senha incorretos. Verifique seus dados.');
+      if (error) {
+        Alert.alert('Erro no Login', 'E-mail ou senha incorretos. Verifique seus dados.');
+        setLoading(false);
+        return;
+      }
+
+      // 📌 MARCAÇÃO DE PERFIL: Salva que o último login neste celular foi de PASSAGEIRO
+      await AsyncStorage.setItem('@user_type', 'passageiro');
+
+      // ✅ Manda direto para a tela interna do passageiro
+      router.replace('/(telas)/passageiroLogado'); // Garanta que o caminho bate com a sua pasta de telas internas
+
+    } catch (err) {
+      Alert.alert('Erro', 'Ocorreu um erro inesperado ao tentar entrar.');
+    } finally {
       setLoading(false);
-    } else {
-     // ✅ Correto
-router.replace('/passageiroLogado');
     }
   }
 

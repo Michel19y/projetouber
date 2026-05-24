@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage'; // Importado para salvar a memória do perfil
+import AsyncStorage from '@react-native-async-storage/async-storage'; // Salva a memória do perfil
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { supabase } from '../../src/lib/supabase';
+import { api } from '../../src/lib/api'; // Importando a nossa API centralizada que bate no Node.js
+import { supabase } from '../../src/lib/supabase'; // Necessário para injetar a sessão no app
 
 export default function LoginMotorista() {
     const [email, setEmail] = useState('');
@@ -28,61 +29,39 @@ export default function LoginMotorista() {
         setLoading(true);
 
         try {
-            // 1. AUTENTICAÇÃO OFICIAL
-            const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ 
+            // 🚀 1. DISPARA PARA O BACKEND EXPRESS (Contorna o RLS com segurança e valida o status)
+            const response = await api.auth.loginMotorista({ 
                 email, 
                 password 
             });
 
-            if (authError) {
-                notify('Erro no Login', 'E-mail ou senha incorretos.');
-                setLoading(false);
-                return;
+            // 🔥 2. O PULO DO GATO: Se o backend aprovou tudo, sincroniza a sessão com o celular
+            if (response && response.session) {
+                const { error: sessionError } = await supabase.auth.setSession({
+                    access_token: response.session.access_token,
+                    refresh_token: response.session.refresh_token,
+                });
+
+                if (sessionError) throw sessionError;
             }
 
-            // 2. VERIFICAÇÃO DE STATUS NA TABELA motoristas_pretendentes
-            const { data: pretendente, error: dbError } = await supabase
-                .from('motoristas_pretendentes')
-                .select('situacao')
-                .eq('email', email)
-                .single();
+            // 3. Salva que o último perfil logado neste celular foi o de MOTORISTA
+            await AsyncStorage.setItem('@user_type', 'motorista');
+            
+            if (Platform.OS === 'web') window.alert('Login aprovado!');
+            
+            // 4. Manda direto para a tela interna usando a rota limpa que o RootLayout espera
+            router.replace('/motoristaLogado');
 
-            if (dbError || !pretendente) {
-                notify('Erro', 'Vínculo de motorista não encontrado.');
-                await supabase.auth.signOut();
-                setLoading(false);
-                return;
-            }
-
-            // 3. REGRA DE NEGÓCIO E REDIRECIONAMENTO INTELIGENTE
-            if (pretendente.situacao === 'pendente') {
-                notify('Aguardando', 'Seu cadastro está em análise. Verifique novamente em breve.');
-                await supabase.auth.signOut(); 
-                setLoading(false);
-            } else if (pretendente.situacao === 'reprovado') {
-                notify('Acesso Negado', 'Seu cadastro foi reprovado pela administração.');
-                await supabase.auth.signOut();
-                setLoading(false);
-            } else if (pretendente.situacao === 'aprovado') {
-                
-                // --- AQUI ESTÁ A CHAVE DA LÓGICA ---
-                // Salva que o último perfil logado neste celular foi o de MOTORISTA
-                await AsyncStorage.setItem('@user_type', 'motorista');
-                
-                if (Platform.OS === 'web') window.alert('Login aprovado!');
-                
-                // Manda direto para a tela interna (conforme o RootLayout agora espera)
-               // No LoginMotorista.tsx, altere para:
-router.replace({ pathname: '/(telas)/motoristaLogado' });
-            }
-
-        } catch (err) {
-            notify('Erro', 'Ocorreu um erro inesperado.');
+        } catch (err: any) {
+            // Captura as mensagens vindas do backend (Ex: "esse cpf ja esta no processo de verificação...")
+            const mensagemErro = err.message || 'E-mail ou senha incorretos.';
+            notify('Aviso', mensagemErro);
+        } finally {
             setLoading(false);
         }
     }
 
-    // ... (restante do código JSX e Styles permanece o mesmo)
     return (
         <KeyboardAvoidingView 
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
