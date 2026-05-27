@@ -1,219 +1,49 @@
+import MapView, { Marker, Polyline } from "@/components/MapViewMock";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as Location from "expo-location";
 import { Stack, useRouter } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    Dimensions,
-    ScrollView,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
 } from "react-native";
-// para:
-import MapView, { Marker, Polyline } from "@/components/MapViewMock";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { decodePolyline, mapsApi, ridesApi } from "../../src/lib/api";
+import { useCorrida } from "../../hooks/useCorrida";
+import { useMotoristaSession } from "../../hooks/useMotoristaSession";
+import { useRidesRealtime } from "../../hooks/useRidesRealtime";
 import { supabase } from "../../src/lib/supabase";
-
-const { width, height } = Dimensions.get("window");
 
 export default function TelaHomeMotorista() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const mapRef = useRef<MapView>(null);
+  const { width, height } = useWindowDimensions(); // ← reativo, atualiza ao redimensionar
 
-  const [nome, setNome] = useState<string | null>("Motorista");
-  const [loading, setLoading] = useState(true);
   const [online, setOnline] = useState(false);
-  const [location, setLocation] = useState<any>(null);
-  const [rides, setRides] = useState<any[]>([]);
-  const [selectedRide, setSelectedRide] = useState<any>(null);
-  const [corridaEmAndamento, setCorridaEmAndamento] = useState<any>(null);
-  const [aceitandoCorrida, setAceitandoCorrida] = useState(false);
-  const [finalizandoCorrida, setFinalizandoCorrida] = useState(false);
 
-  const [driverToOriginCoords, setDriverToOriginCoords] = useState<any[]>([]);
-  const [originToDestCoords, setOriginToDestCoords] = useState<any[]>([]);
+  const { nome, location, loading } = useMotoristaSession();
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        // 1. Verifica sessão
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session) {
-          router.replace("/(auth)/loginMotorista");
-          return;
-        }
+  const {
+    mapRef,
+    selectedRide,
+    setSelectedRide,
+    corridaEmAndamento,
+    aceitandoCorrida,
+    finalizandoCorrida,
+    driverToOriginCoords,
+    originToDestCoords,
+    traçarRota,
+    handleAcceptRide,
+    finalizarCorrida,
+    cancelarSelecao,
+  } = useCorrida(location);
 
-        // 2. Busca o nome do motorista
-        const { data } = await supabase
-          .from("motoristas_pretendentes")
-          .select("nome")
-          .eq("email", session.user.email)
-          .maybeSingle();
-
-        if (data?.nome) setNome(data.nome.split(" ")[0]);
-
-        // 3. Tenta pegar a localização real
-        let { status } = await Location.requestForegroundPermissionsAsync();
-        if (status === "granted") {
-          let loc = await Location.getCurrentPositionAsync({});
-          setLocation(loc.coords);
-        } else {
-          // 🧭 SE ADICIONOU COORDENADAS COPIADAS DE MOCK PARA RODAR NA WEB SEM TRAVAR:
-          console.log(
-            "Permissão de localização negada na Web. Aplicando Coordenadas Mock.",
-          );
-          setLocation({
-            latitude: -23.55052, // Coordenadas exemplo (São Paulo ou altere para sua cidade)
-            longitude: -46.633308,
-          });
-        }
-      } catch (err) {
-        console.error("Erro ao carregar dados de localização:", err);
-        // 🛡️ Garante que se der timeout no GPS, o app não trave em loop:
-        setLocation({
-          latitude: -23.55052,
-          longitude: -46.633308,
-        });
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, []);
-
-  // O Realtime do Supabase permanece no cliente — é seguro pois apenas lê corridas pendentes
-  useEffect(() => {
-    if (!online || corridaEmAndamento) {
-      setRides([]);
-      return;
-    }
-
-    const fetchPendingRides = async () => {
-      const { data } = await supabase
-        .from("rides")
-        .select("*")
-        .eq("status", "pendente")
-        .is("driver_id", null);
-      setRides(data || []);
-    };
-
-    fetchPendingRides();
-
-    const channel = supabase
-      .channel("rides-realtime")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "rides" },
-        (p) => {
-          if (p.new.status === "pendente") setRides((prev) => [...prev, p.new]);
-        },
-      )
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "rides" },
-        (p) => {
-          // Remove da lista se foi aceita/cancelada por outro motorista
-          if (p.new.status !== "pendente") {
-            setRides((prev) => prev.filter((r) => r.id !== p.new.id));
-          }
-        },
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [online, corridaEmAndamento]);
-
-  // ✅ Rotas calculadas pelo Backend (não expõe OSRM ao cliente)
-  const traçarRota = async (ride: any) => {
-    if (!location) return;
-    try {
-      const data = await mapsApi.rotaMotorista(
-        location.latitude,
-        location.longitude,
-        ride.origin_coords.lat,
-        ride.origin_coords.lng,
-        ride.destination_coords.lat,
-        ride.destination_coords.lng,
-      );
-
-      const p1 = decodePolyline(data.rotaAtendimento.geometry);
-      const p2 = decodePolyline(data.rotaViagem.geometry);
-
-      setDriverToOriginCoords(p1);
-      setOriginToDestCoords(p2);
-
-      mapRef.current?.fitToCoordinates([...p1, ...p2], {
-        edgePadding: { top: 80, right: 50, bottom: 450, left: 50 },
-        animated: true,
-      });
-    } catch (e) {
-      console.error("Erro ao traçar rota:", e);
-    }
-  };
-
-  // ✅ Aceitar corrida via Backend (atomicidade e verificação de owner server-side)
-  const handleAcceptRide = async () => {
-    if (!selectedRide) return;
-    setAceitandoCorrida(true);
-    try {
-      await ridesApi.aceitar(selectedRide.id);
-      setCorridaEmAndamento(selectedRide);
-      setSelectedRide(null);
-      setRides([]);
-    } catch (err: any) {
-      Alert.alert(
-        "Indisponível",
-        err.message || "Esta corrida já foi aceita ou cancelada.",
-      );
-      setSelectedRide(null);
-      setDriverToOriginCoords([]);
-      setOriginToDestCoords([]);
-    } finally {
-      setAceitandoCorrida(false);
-    }
-  };
-
-  // ✅ Finalizar corrida via Backend (calcula ganho líquido server-side)
-  const finalizarCorrida = () => {
-    Alert.alert("Finalizar", "O passageiro chegou ao destino?", [
-      { text: "Não" },
-      {
-        text: "Sim",
-        onPress: async () => {
-          setFinalizandoCorrida(true);
-          try {
-            const result = await ridesApi.finalizar(corridaEmAndamento.id);
-            Alert.alert(
-              "✅ Corrida Finalizada!",
-              `Seu ganho: R$ ${result.ganhoLiquido.toFixed(2)}`,
-            );
-            setCorridaEmAndamento(null);
-            setDriverToOriginCoords([]);
-            setOriginToDestCoords([]);
-            setOnline(true);
-          } catch (err: any) {
-            Alert.alert(
-              "Erro",
-              err.message || "Não foi possível finalizar a corrida.",
-            );
-          } finally {
-            setFinalizandoCorrida(false);
-          }
-        },
-      },
-    ]);
-  };
+  const { rides } = useRidesRealtime(online, corridaEmAndamento);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -233,9 +63,10 @@ export default function TelaHomeMotorista() {
       <StatusBar barStyle="light-content" />
       <Stack.Screen options={{ headerShown: false }} />
 
+      {/* Mapa ocupa tela toda — dimensões reativas */}
       <MapView
         ref={mapRef}
-        style={styles.map}
+        style={{ width, height }}
         initialRegion={{
           latitude: location.latitude,
           longitude: location.longitude,
@@ -244,14 +75,12 @@ export default function TelaHomeMotorista() {
         }}
         customMapStyle={mapDarkStyle}
       >
-        {/* Marcador do motorista */}
         <Marker coordinate={location}>
           <View style={styles.driverMarker}>
             <Ionicons name="car" size={20} color="#fff" />
           </View>
         </Marker>
 
-        {/* Marcadores das corridas disponíveis */}
         {!corridaEmAndamento &&
           rides.map((ride) => (
             <Marker
@@ -271,7 +100,6 @@ export default function TelaHomeMotorista() {
             </Marker>
           ))}
 
-        {/* Rotas */}
         {driverToOriginCoords.length > 0 && (
           <Polyline
             coordinates={driverToOriginCoords}
@@ -289,111 +117,133 @@ export default function TelaHomeMotorista() {
         )}
       </MapView>
 
-      {/* Cabeçalho superior (oculto durante corrida) */}
+      {/* Header — só quando não há corrida ativa */}
       {!corridaEmAndamento && (
         <View style={[styles.topContainer, { paddingTop: insets.top + 10 }]}>
           <View style={styles.headerRow}>
             <View>
               <Text style={styles.greeting}>Olá, {nome}</Text>
-              <Text
-                style={[
-                  styles.onlineBadge,
-                  { color: online ? "#34C759" : "#888" },
-                ]}
-              >
-                {online ? "● Online" : "○ Offline"}
-              </Text>
+              <View style={styles.statusPill}>
+                <View
+                  style={[
+                    styles.statusDot,
+                    { backgroundColor: online ? "#34C759" : "#555" },
+                  ]}
+                />
+                <Text
+                  style={[
+                    styles.statusPillText,
+                    { color: online ? "#34C759" : "#888" },
+                  ]}
+                >
+                  {online ? "Online" : "Offline"}
+                </Text>
+              </View>
             </View>
-            <TouchableOpacity style={styles.profileBtn} onPress={handleLogout}>
+            <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
               <Ionicons name="log-out-outline" size={22} color="#fff" />
             </TouchableOpacity>
           </View>
+
           <TouchableOpacity
             style={[
-              styles.statusBtn,
-              online ? styles.bgOnline : styles.bgOffline,
+              styles.toggleBtn,
+              online ? styles.toggleBtnPause : styles.toggleBtnAvailable,
             ]}
             onPress={() => {
               setOnline(!online);
-              if (online) setSelectedRide(null);
+              if (online) cancelarSelecao();
             }}
           >
-            <Text style={styles.statusText}>
-              {online ? "PAUSAR RECEBIMENTO" : "FICAR DISPONÍVEL"}
+            <Text style={styles.toggleBtnText}>
+              {online ? "Pausar recebimento" : "Ficar disponível"}
             </Text>
           </TouchableOpacity>
         </View>
       )}
 
-      {/* Interface Inferior */}
-      <View
-        style={[styles.bottomWrapper, { paddingBottom: insets.bottom + 10 }]}
-      >
-        {/* 1. LISTA DE CORRIDAS DISPONÍVEIS */}
+      {/* Painel inferior */}
+      <View style={[styles.bottomPanel, { paddingBottom: insets.bottom + 12 }]}>
+        {/* Estado offline */}
+        {!online && !corridaEmAndamento && (
+          <View style={styles.offlineHint}>
+            <Text style={styles.offlineTitle}>Você está offline</Text>
+            <Text style={styles.offlineSubtitle}>
+              Toque em "Ficar disponível" para receber chamadas.
+            </Text>
+          </View>
+        )}
+
+        {/* Lista de corridas */}
         {online && !selectedRide && !corridaEmAndamento && (
           <ScrollView
-            style={styles.ridesList}
             showsVerticalScrollIndicator={false}
+            style={styles.ridesList}
           >
-            <Text style={styles.listTitle}>{rides.length} CHAMADAS AGORA</Text>
-            {rides.map((ride) => (
-              <TouchableOpacity
-                key={ride.id}
-                style={styles.rideItem}
-                onPress={() => {
-                  setSelectedRide(ride);
-                  traçarRota(ride);
-                }}
-              >
-                <View style={styles.ridePriceBadge}>
-                  {/* ✅ Ganho do motorista calculado pelo servidor — aqui mostramos o valor salvo */}
-                  <Text style={styles.rideItemValue}>
-                    R$ {(ride.valor * 0.9).toFixed(2)}
-                  </Text>
-                </View>
-                <View style={{ flex: 1, marginLeft: 12 }}>
-                  <Text style={styles.rideItemAddr} numberOfLines={1}>
-                    {ride.origin_text}
-                  </Text>
-                  <Text style={styles.rideItemDist}>{ride.distancia}</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color="#444" />
-              </TouchableOpacity>
-            ))}
+            <Text style={styles.sectionLabel}>
+              {rides.length} {rides.length === 1 ? "chamada" : "chamadas"} agora
+            </Text>
+
             {rides.length === 0 && (
               <Text style={styles.noRides}>
                 Aguardando novas solicitações...
               </Text>
             )}
+
+            {rides.map((ride) => (
+              <TouchableOpacity
+                key={ride.id}
+                style={styles.rideCard}
+                onPress={() => {
+                  setSelectedRide(ride);
+                  traçarRota(ride);
+                }}
+              >
+                <View style={styles.rideCardTop}>
+                  <Text style={styles.rideValue}>
+                    R${" "}
+                    {ride.ganho_motorista?.toFixed(2) ??
+                      (ride.valor * 0.9).toFixed(2)}
+                  </Text>
+                  <View style={styles.rideInfo}>
+                    <Text style={styles.rideAddr} numberOfLines={1}>
+                      {ride.origin_text}
+                    </Text>
+                    <Text style={styles.rideDist}>
+                      {ride.distancia_km} km de distância
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color="#444" />
+                </View>
+              </TouchableOpacity>
+            ))}
           </ScrollView>
         )}
 
-        {/* 2. CARD DE INSPEÇÃO (antes de aceitar) */}
+        {/* Card de inspeção */}
         {selectedRide && !corridaEmAndamento && (
-          <View style={styles.bottomCard}>
+          <View style={styles.inspectCard}>
             <View style={styles.dragHandle} />
-            <Text style={styles.rideLabel}>GANHO LÍQUIDO ESTIMADO</Text>
-            <Text style={styles.rideValue}>
-              R$ {(selectedRide.valor * 0.9).toFixed(2)}
+            <Text style={styles.inspectLabel}>Ganho estimado</Text>
+            <Text style={styles.inspectValue}>
+              R${" "}
+              {selectedRide.ganho_motorista?.toFixed(2) ??
+                (selectedRide.valor * 0.9).toFixed(2)}
             </Text>
 
-            <View style={styles.infoRow}>
-              <Ionicons name="location" size={16} color="#00BFFF" />
-              <Text style={styles.addressText} numberOfLines={2}>
+            <View style={styles.addrRow}>
+              <Ionicons name="location" size={18} color="#00BFFF" />
+              <Text style={styles.addrText} numberOfLines={2}>
                 Embarque: {selectedRide.origin_text}
               </Text>
             </View>
 
             <View style={styles.actionRow}>
               <TouchableOpacity
-                style={styles.btnCancel}
-                onPress={() => {
-                  setSelectedRide(null);
-                  setDriverToOriginCoords([]);
-                  setOriginToDestCoords([]);
-                }}
+                style={styles.btnReject}
+                onPress={cancelarSelecao}
               >
-                <Ionicons name="close" size={24} color="#fff" />
+                <Ionicons name="close" size={26} color="#fff" />
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.btnAccept}
@@ -403,30 +253,28 @@ export default function TelaHomeMotorista() {
                 {aceitandoCorrida ? (
                   <ActivityIndicator color="#000" />
                 ) : (
-                  <Text style={styles.btnAcceptText}>ACEITAR CORRIDA</Text>
+                  <Text style={styles.btnAcceptText}>Aceitar corrida</Text>
                 )}
               </TouchableOpacity>
             </View>
           </View>
         )}
 
-        {/* 3. CARD DE PRIORIDADE (corrida em andamento) */}
+        {/* Card de corrida ativa */}
         {corridaEmAndamento && (
-          <View
-            style={[
-              styles.bottomCard,
-              { borderTopColor: "#34C759", borderTopWidth: 3 },
-            ]}
-          >
+          <View style={styles.activeCard}>
             <View style={styles.activeBadge}>
               <Text style={styles.activeBadgeText}>EM VIAGEM ATIVA</Text>
             </View>
-            <Text style={styles.rideValue}>
-              R$ {(corridaEmAndamento.valor * 0.9).toFixed(2)}
+
+            <Text style={styles.activeValue}>
+              R${" "}
+              {corridaEmAndamento.ganho_motorista?.toFixed(2) ??
+                (corridaEmAndamento.valor * 0.9).toFixed(2)}
             </Text>
 
-            <View style={styles.destinationBox}>
-              <Text style={styles.destTitle}>DESTINO DO PASSAGEIRO</Text>
+            <View style={styles.destBox}>
+              <Text style={styles.destLabel}>Destino do passageiro</Text>
               <Text style={styles.destAddr}>
                 {corridaEmAndamento.destination_text}
               </Text>
@@ -434,13 +282,13 @@ export default function TelaHomeMotorista() {
 
             <TouchableOpacity
               style={[styles.btnFinish, finalizandoCorrida && { opacity: 0.6 }]}
-              onPress={finalizarCorrida}
+              onPress={() => finalizarCorrida(() => setOnline(true))}
               disabled={finalizandoCorrida}
             >
               {finalizandoCorrida ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <Text style={styles.btnFinishText}>FINALIZAR E RECEBER</Text>
+                <Text style={styles.btnFinishText}>Entreguei o passageiro</Text>
               )}
             </TouchableOpacity>
           </View>
@@ -457,78 +305,162 @@ const mapDarkStyle = [
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#000" },
-  map: { width: width, height: height },
   containerCenter: {
     flex: 1,
     backgroundColor: "#000",
     justifyContent: "center",
     alignItems: "center",
   },
-  topContainer: { position: "absolute", left: 20, right: 20, zIndex: 10 },
+
+  // Header
+  topContainer: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    zIndex: 10,
+  },
   headerRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 15,
+    marginBottom: 12,
   },
-  greeting: { fontSize: 22, fontWeight: "bold", color: "#fff" },
-  onlineBadge: { fontSize: 12, fontWeight: "bold" },
-  profileBtn: {
+  greeting: {
+    fontSize: 22,
+    fontWeight: "500",
+    color: "#fff",
+    marginBottom: 6,
+  },
+  statusPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+    alignSelf: "flex-start",
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  statusPillText: {
+    fontSize: 13,
+    fontWeight: "500",
+  },
+  logoutBtn: {
     backgroundColor: "rgba(255,255,255,0.1)",
     padding: 10,
     borderRadius: 20,
   },
-  statusBtn: {
-    padding: 16,
-    borderRadius: 15,
+  toggleBtn: {
+    padding: 18,
+    borderRadius: 16,
     alignItems: "center",
-    justifyContent: "center",
   },
-  bgOnline: { backgroundColor: "#FF3B30" },
-  bgOffline: { backgroundColor: "#34C759" },
-  statusText: {
+  toggleBtnAvailable: { backgroundColor: "#34C759" },
+  toggleBtnPause: { backgroundColor: "#FF3B30" },
+  toggleBtnText: {
     color: "#fff",
-    fontWeight: "bold",
+    fontWeight: "500",
+    fontSize: 16,
+  },
+
+  // Painel inferior
+  bottomPanel: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    zIndex: 11,
+  },
+
+  // Offline
+  offlineHint: {
+    margin: 12,
+    backgroundColor: "rgba(0,0,0,0.75)",
+    borderRadius: 16,
+    padding: 16,
+    alignItems: "center",
+  },
+  offlineTitle: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "500",
+    marginBottom: 4,
+  },
+  offlineSubtitle: {
+    color: "#888",
     fontSize: 14,
+    textAlign: "center",
+  },
+
+  // Lista
+  ridesList: {
+    maxHeight: 280,
+    backgroundColor: "#111",
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 14,
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: "#1a1a1a",
+  },
+  sectionLabel: {
+    color: "#555",
+    fontSize: 12,
+    fontWeight: "500",
+    marginBottom: 12,
+    textTransform: "uppercase",
     letterSpacing: 0.5,
   },
-  bottomWrapper: { position: "absolute", bottom: 0, width: "100%", zIndex: 11 },
-  ridesList: {
-    maxHeight: 300,
-    backgroundColor: "#111",
-    borderTopLeftRadius: 30,
-    borderTopRightRadius: 30,
-    padding: 25,
-    borderTopWidth: 1,
-    borderTopColor: "#222",
+  noRides: {
+    color: "#333",
+    textAlign: "center",
+    marginVertical: 20,
+    fontSize: 14,
   },
-  listTitle: {
-    color: "#555",
-    fontSize: 11,
-    fontWeight: "bold",
-    marginBottom: 15,
+  rideCard: {
+    backgroundColor: "#1a1a1a",
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: "#222",
   },
-  rideItem: {
+  rideCardTop: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#1c1c1c",
-    padding: 14,
-    borderRadius: 18,
-    marginBottom: 10,
+    gap: 10,
   },
-  ridePriceBadge: { backgroundColor: "#222", padding: 10, borderRadius: 12 },
-  rideItemValue: { color: "#34C759", fontWeight: "bold", fontSize: 15 },
-  rideItemAddr: { color: "#fff", fontSize: 14, fontWeight: "500" },
-  rideItemDist: { color: "#666", fontSize: 12 },
-  noRides: { color: "#444", textAlign: "center", marginTop: 20, fontSize: 13 },
-  bottomCard: {
+  rideValue: {
+    fontSize: 22,
+    fontWeight: "500",
+    color: "#34C759",
+    minWidth: 85,
+  },
+  rideInfo: { flex: 1 },
+  rideAddr: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "500",
+    marginBottom: 3,
+  },
+  rideDist: {
+    color: "#666",
+    fontSize: 13,
+  },
+
+  // Card inspeção
+  inspectCard: {
     backgroundColor: "#111",
-    borderTopLeftRadius: 35,
-    borderTopRightRadius: 35,
-    padding: 25,
-    shadowColor: "#000",
-    shadowRadius: 10,
-    elevation: 20,
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    padding: 24,
+    borderTopWidth: 1,
+    borderTopColor: "#1a1a1a",
   },
   dragHandle: {
     width: 40,
@@ -538,77 +470,126 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     marginBottom: 20,
   },
-  rideLabel: {
+  inspectLabel: {
     color: "#007AFF",
-    fontSize: 11,
-    fontWeight: "bold",
+    fontSize: 12,
+    fontWeight: "500",
     textAlign: "center",
+    marginBottom: 4,
   },
-  rideValue: {
+  inspectValue: {
     color: "#fff",
-    fontSize: 40,
-    fontWeight: "bold",
+    fontSize: 44,
+    fontWeight: "500",
     textAlign: "center",
-    marginVertical: 10,
+    marginBottom: 16,
   },
-  infoRow: {
+  addrRow: {
     flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 25,
-    paddingHorizontal: 20,
+    alignItems: "flex-start",
+    gap: 8,
+    marginBottom: 24,
+    paddingHorizontal: 8,
   },
-  addressText: {
+  addrText: {
     color: "#bbb",
     fontSize: 15,
-    marginLeft: 8,
-    textAlign: "center",
+    flex: 1,
+    lineHeight: 22,
   },
-  actionRow: { flexDirection: "row", gap: 15 },
+  actionRow: {
+    flexDirection: "row",
+    gap: 12,
+  },
   btnAccept: {
     flex: 4,
     backgroundColor: "#fff",
     padding: 20,
-    borderRadius: 22,
+    borderRadius: 20,
     alignItems: "center",
+    justifyContent: "center",
+    minHeight: 60,
   },
-  btnAcceptText: { color: "#000", fontWeight: "bold", fontSize: 17 },
-  btnCancel: {
+  btnAcceptText: {
+    color: "#000",
+    fontWeight: "500",
+    fontSize: 17,
+  },
+  btnReject: {
     flex: 1,
     backgroundColor: "#222",
     padding: 20,
-    borderRadius: 22,
+    borderRadius: 20,
     alignItems: "center",
+    justifyContent: "center",
+    minHeight: 60,
+  },
+
+  // Card ativo
+  activeCard: {
+    backgroundColor: "#0d1f0d",
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    padding: 24,
+    borderTopWidth: 2,
+    borderTopColor: "#34C759",
   },
   activeBadge: {
-    backgroundColor: "rgba(52, 199, 89, 0.1)",
     alignSelf: "center",
-    paddingHorizontal: 15,
+    backgroundColor: "rgba(52,199,89,0.12)",
+    paddingHorizontal: 14,
     paddingVertical: 5,
     borderRadius: 10,
-    marginBottom: 10,
+    marginBottom: 8,
   },
-  activeBadgeText: { color: "#34C759", fontSize: 11, fontWeight: "bold" },
-  destinationBox: {
-    backgroundColor: "#1c1c1c",
-    padding: 20,
-    borderRadius: 20,
-    marginBottom: 25,
+  activeBadgeText: {
+    color: "#34C759",
+    fontSize: 11,
+    fontWeight: "500",
+    letterSpacing: 0.5,
   },
-  destTitle: {
+  activeValue: {
+    color: "#fff",
+    fontSize: 48,
+    fontWeight: "500",
+    textAlign: "center",
+    marginVertical: 8,
+  },
+  destBox: {
+    backgroundColor: "#111",
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
+  },
+  destLabel: {
     color: "#555",
-    fontSize: 10,
-    fontWeight: "bold",
-    marginBottom: 5,
+    fontSize: 11,
+    fontWeight: "500",
+    marginBottom: 6,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
   },
-  destAddr: { color: "#fff", fontSize: 16, fontWeight: "500" },
+  destAddr: {
+    color: "#fff",
+    fontSize: 17,
+    fontWeight: "500",
+    lineHeight: 24,
+  },
   btnFinish: {
     backgroundColor: "#34C759",
     padding: 22,
-    borderRadius: 22,
+    borderRadius: 20,
     alignItems: "center",
+    minHeight: 64,
+    justifyContent: "center",
   },
-  btnFinishText: { color: "#fff", fontWeight: "bold", fontSize: 18 },
+  btnFinishText: {
+    color: "#fff",
+    fontWeight: "500",
+    fontSize: 18,
+  },
+
+  // Marcadores
   driverMarker: {
     backgroundColor: "#007AFF",
     padding: 8,
@@ -624,5 +605,9 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "#fff",
   },
-  rideMarkerText: { color: "#fff", fontWeight: "bold", fontSize: 12 },
+  rideMarkerText: {
+    color: "#fff",
+    fontWeight: "500",
+    fontSize: 12,
+  },
 });

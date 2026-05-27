@@ -69,6 +69,8 @@ export const ridesApi = {
     metodo_pagamento: "dinheiro" | "pix";
     destination_text?: string;
   }) => apiRequest("POST", "/api/rides/solicitar", params),
+  disponiveis: () => apiRequest("GET", "/api/rides/disponiveis"),
+  pendentes: () => apiRequest("GET", "/api/rides/pendentes"),
 
   cancelar: (ride_id: string) =>
     apiRequest("POST", "/api/rides/cancelar", { ride_id }),

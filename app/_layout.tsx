@@ -147,19 +147,36 @@ export default function RootLayout() {
         }
         // 🚗 2. SE FOR MOTORISTA
         else if (userType === "motorista") {
-          console.log("🚀 [DIREÇÃO] Empurrando para: /(telas)/motoristaLogado");
-          router.replace("/(telas)/motoristaLogado");
+          if (!currentSegment.includes("motoristaLogado")) {
+            // 👈 adiciona essa verificação
+            console.log(
+              "🚀 [DIREÇÃO] Empurrando para: /(telas)/motoristaLogado",
+            );
+            router.replace("/(telas)/motoristaLogado");
+          } else {
+            console.log(
+              "✅ [DIREÇÃO] Já está em motoristaLogado. Redirecionamento cancelado.",
+            );
+          }
           console.log(
             "=========================================================",
           );
           return;
         }
+
         // 🚶‍♂️ 3. SE FOR PASSAGEIRO
         else if (userType === "passageiro") {
-          console.log(
-            "🚀 [DIREÇÃO] Empurrando para: /(telas)/passageiroLogado",
-          );
-          router.replace("/(telas)/passageiroLogado");
+          if (!currentSegment.includes("passageiroLogado")) {
+            // 👈 mesma coisa
+            console.log(
+              "🚀 [DIREÇÃO] Empurrando para: /(telas)/passageiroLogado",
+            );
+            router.replace("/(telas)/passageiroLogado");
+          } else {
+            console.log(
+              "✅ [DIREÇÃO] Já está em passageiroLogado. Redirecionamento cancelado.",
+            );
+          }
           console.log(
             "=========================================================",
           );
