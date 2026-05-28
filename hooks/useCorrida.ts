@@ -1,7 +1,11 @@
 import MapView from "@/components/MapViewMock";
 import { decodePolyline, mapsApi, ridesApi } from "@/src/lib/api";
-import { useRef, useState } from "react";
+import { supabase } from "@/src/lib/supabase";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useEffect, useRef, useState } from "react";
 import { Alert } from "react-native";
+
+const CORRIDA_ATIVA_KEY = "@corrida_ativa";
 
 export function useCorrida(location: any) {
   const mapRef = useRef<MapView>(null);
@@ -11,6 +15,35 @@ export function useCorrida(location: any) {
   const [finalizandoCorrida, setFinalizandoCorrida] = useState(false);
   const [driverToOriginCoords, setDriverToOriginCoords] = useState<any[]>([]);
   const [originToDestCoords, setOriginToDestCoords] = useState<any[]>([]);
+
+  // Restaura corrida ativa ao montar (F5, fechou e abriu o app)
+  useEffect(() => {
+    async function restaurarCorrida() {
+      try {
+        const salva = await AsyncStorage.getItem(CORRIDA_ATIVA_KEY);
+        if (!salva) return;
+
+        const corrida = JSON.parse(salva);
+
+        // Confirma no banco se ainda está ativa
+        const { data } = await supabase
+          .from("rides")
+          .select("status")
+          .eq("id", corrida.id)
+          .single();
+
+        if (data?.status === "aceita") {
+          setCorridaEmAndamento(corrida);
+        } else {
+          // Corrida já finalizou ou cancelou — limpa o storage
+          await AsyncStorage.removeItem(CORRIDA_ATIVA_KEY);
+        }
+      } catch {
+        // Silencia erros de parse ou rede
+      }
+    }
+    restaurarCorrida();
+  }, []);
 
   const traçarRota = async (ride: any) => {
     if (!location) return;
@@ -42,6 +75,11 @@ export function useCorrida(location: any) {
     try {
       await ridesApi.aceitar(selectedRide.id);
       setCorridaEmAndamento(selectedRide);
+      // Persiste localmente para sobreviver a F5 / reinício do app
+      await AsyncStorage.setItem(
+        CORRIDA_ATIVA_KEY,
+        JSON.stringify(selectedRide),
+      );
       setSelectedRide(null);
     } catch (err: any) {
       Alert.alert(
@@ -57,30 +95,42 @@ export function useCorrida(location: any) {
   };
 
   const finalizarCorrida = (onSuccess: () => void) => {
-    Alert.alert("Finalizar", "O passageiro chegou ao destino?", [
-      { text: "Não" },
-      {
-        text: "Sim",
-        onPress: async () => {
-          setFinalizandoCorrida(true);
-          try {
-            const result = await ridesApi.finalizar(corridaEmAndamento.id);
-            Alert.alert(
-              "✅ Corrida Finalizada!",
-              `Seu ganho: R$ ${result.ganhoLiquido.toFixed(2)}`,
-            );
-            setCorridaEmAndamento(null);
-            setDriverToOriginCoords([]);
-            setOriginToDestCoords([]);
-            onSuccess();
-          } catch (err: any) {
-            Alert.alert("Erro", err.message || "Não foi possível finalizar.");
-          } finally {
-            setFinalizandoCorrida(false);
-          }
-        },
-      },
-    ]);
+    const confirmado =
+      typeof window !== "undefined"
+        ? window.confirm("O passageiro chegou ao destino?")
+        : true;
+
+    if (!confirmado) return;
+
+    const executar = async () => {
+      setFinalizandoCorrida(true);
+      try {
+        const result = await ridesApi.finalizar(corridaEmAndamento.id);
+        // Limpa persistência ao finalizar
+        await AsyncStorage.removeItem(CORRIDA_ATIVA_KEY);
+        const msg = `Seu ganho: R$ ${result.ganhoLiquido?.toFixed(2) ?? "---"}`;
+        if (typeof window !== "undefined") {
+          window.alert(`✅ Corrida Finalizada!\n${msg}`);
+        } else {
+          Alert.alert("✅ Corrida Finalizada!", msg);
+        }
+        setCorridaEmAndamento(null);
+        setDriverToOriginCoords([]);
+        setOriginToDestCoords([]);
+        onSuccess();
+      } catch (err: any) {
+        const msg = err.message || "Não foi possível finalizar.";
+        if (typeof window !== "undefined") {
+          window.alert(`Erro: ${msg}`);
+        } else {
+          Alert.alert("Erro", msg);
+        }
+      } finally {
+        setFinalizandoCorrida(false);
+      }
+    };
+
+    executar();
   };
 
   const cancelarSelecao = () => {
