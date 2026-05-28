@@ -1,27 +1,29 @@
-import { Ionicons } from '@expo/vector-icons'; // Biblioteca de ícones padrão do Expo
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import {
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
 export default function HomeScreen() {
   const router = useRouter();
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" />
-      
-      {/* Cabeçalho de Boas-vindas */}
+      <StatusBar style="light" />
+
       <View style={styles.header}>
         <Text style={styles.mainTitle}>Como vamos viajar hoje?</Text>
         <Text style={styles.subtitle}>Selecione seu perfil para continuar</Text>
       </View>
 
-      {/* Container de Escolhas */}
       <View style={styles.choiceContainer}>
-        
-        {/* Card de Motorista */}
-        <TouchableOpacity 
-          style={styles.card} 
-          activeOpacity={0.7}
+        {/* Motorista */}
+        <TouchableOpacity
+          style={styles.card}
           onPress={() => router.push('/(telas)/motorista')}
         >
           <View style={[styles.iconContainer, { backgroundColor: '#34C75920' }]}>
@@ -31,13 +33,25 @@ export default function HomeScreen() {
             <Text style={styles.cardTitle}>Sou Motorista</Text>
             <Text style={styles.cardDescription}>Quero dirigir e gerar ganhos</Text>
           </View>
-          <Ionicons name="chevron-forward" size={24} color="#333" />
         </TouchableOpacity>
 
-        {/* Card de Passageiro */}
-        <TouchableOpacity 
-          style={styles.card} 
-          activeOpacity={0.7}
+        {/* Admin */}
+        <TouchableOpacity
+          style={styles.card}
+          onPress={() => router.push('/(auth)/loginDashboard')}
+        >
+          <View style={[styles.iconContainer, { backgroundColor: '#FF950020' }]}>
+            <Ionicons name="settings" size={40} color="#FF9500" />
+          </View>
+          <View style={styles.cardInfo}>
+            <Text style={styles.cardTitle}>Sou Admin</Text>
+            <Text style={styles.cardDescription}>Quero gerenciar o sistema</Text>
+          </View>
+        </TouchableOpacity>
+
+        {/* Passageiro */}
+        <TouchableOpacity
+          style={styles.card}
           onPress={() => router.push('/(telas)/passageiro')}
         >
           <View style={[styles.iconContainer, { backgroundColor: '#007AFF20' }]}>
@@ -47,12 +61,9 @@ export default function HomeScreen() {
             <Text style={styles.cardTitle}>Sou Passageiro</Text>
             <Text style={styles.cardDescription}>Quero solicitar uma viagem</Text>
           </View>
-          <Ionicons name="chevron-forward" size={24} color="#333" />
         </TouchableOpacity>
-
       </View>
 
-      {/* Nota de rodapé sutil */}
       <Text style={styles.footerText}>Versão 1.0.0</Text>
     </View>
   );
@@ -61,7 +72,7 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000', // Preto absoluto
+    backgroundColor: '#000',
     paddingHorizontal: 25,
     justifyContent: 'center',
   },
@@ -84,7 +95,7 @@ const styles = StyleSheet.create({
     gap: 20,
   },
   card: {
-    backgroundColor: '#111', // Cinza muito escuro para contraste
+    backgroundColor: '#111',
     flexDirection: 'row',
     alignItems: 'center',
     padding: 20,

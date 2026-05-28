@@ -1,10 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage'; // Salva a memória do perfil
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { supabase } from '../../src/lib/supabase';
-
-// ... seus imports permanecem iguais
+import { api } from '../../src/lib/api'; // Importando a nossa API centralizada que bate no Node.js
+import { supabase } from '../../src/lib/supabase'; // Necessário para injetar a sessão no app
 
 export default function LoginMotorista() {
     const [email, setEmail] = useState('');
@@ -29,90 +29,75 @@ export default function LoginMotorista() {
         setLoading(true);
 
         try {
-            // 1. Faz o login no Supabase Auth
-            const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ 
+            // 🚀 1. DISPARA PARA O BACKEND EXPRESS (Contorna o RLS com segurança e valida o status)
+            const response = await api.auth.loginMotorista({ 
                 email, 
                 password 
             });
 
-            if (authError) {
-                notify('Erro no Login', 'E-mail ou senha incorretos.');
-                setLoading(false);
-                return;
+            // 🔥 2. O PULO DO GATO: Se o backend aprovou tudo, sincroniza a sessão com o celular
+            if (response && response.session) {
+                const { error: sessionError } = await supabase.auth.setSession({
+                    access_token: response.session.access_token,
+                    refresh_token: response.session.refresh_token,
+                });
+
+                if (sessionError) throw sessionError;
             }
 
-            // 2. Verifica o status na tabela motoristas_pretendentes
-            const { data: perfil, error: dbError } = await supabase
-                .from('motoristas_pretendentes')
-                .select('situacao')
-                .eq('email', email)
-                .single();
+            // 3. Salva que o último perfil logado neste celular foi o de MOTORISTA
+            await AsyncStorage.setItem('@user_type', 'motorista');
+            
+            if (Platform.OS === 'web') window.alert('Login aprovado!');
+            
+            // 4. Manda direto para a tela interna usando a rota limpa que o RootLayout espera
+            router.replace('/motoristaLogado');
 
-            if (dbError || !perfil) {
-                notify('Erro', 'Perfil de motorista não encontrado.');
-                await supabase.auth.signOut(); // Desloga por segurança
-                setLoading(false);
-                return;
-            }
-
-            // 3. Regra de Negócio: Verificação de Aprovação
-            if (perfil.situacao === 'pendente') {
-                notify('Aguardando', 'Seu cadastro ainda está em análise. Avisaremos por e-mail quando for aprovado.');
-                await supabase.auth.signOut(); // Bloqueia o acesso às tabs
-                setLoading(false);
-            } else if (perfil.situacao === 'reprovado') {
-                notify('Acesso Negado', 'Infelizmente seu cadastro não foi aprovado.');
-                await supabase.auth.signOut();
-                setLoading(false);
-            } else {
-                // APROVADO!
-                if (Platform.OS === 'web') window.alert('Login aprovado!');
-                router.replace('/(tabs)');
-            }
-
-        } catch (err) {
-            notify('Erro', 'Ocorreu um erro inesperado.');
+        } catch (err: any) {
+            // Captura as mensagens vindas do backend (Ex: "esse cpf ja esta no processo de verificação...")
+            const mensagemErro = err.message || 'E-mail ou senha incorretos.';
+            notify('Aviso', mensagemErro);
+        } finally {
             setLoading(false);
         }
     }
 
-    // ... restante do return e styles permanecem iguais
     return (
-        <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        <KeyboardAvoidingView 
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
             style={styles.container}
         >
             <View style={styles.content}>
                 <View style={styles.iconCircle}>
-                    <Ionicons name="key" size={40} color="#007AFF" />
+                    <Ionicons name="key" size={40} color="#1eb318" />
                 </View>
 
-                <Text style={styles.title}>Acesse fsua conta</Text>
-                <Text style={styles.subtitle}>Olá motorista, que bom ver você novamente!</Text>
-
+                <Text style={styles.title}>Acesse sua conta</Text>
+                <Text style={styles.subtitle}>Olá motorista, sua senha do perfil será validada.</Text>
+                
                 <View style={styles.form}>
                     <View style={styles.inputWrapper}>
                         <Ionicons name="mail-outline" size={20} color="#666" style={styles.inputIcon} />
-                        <TextInput
-                            style={styles.input}
-                            placeholder="E-mail"
-                            placeholderTextColor="#555"
-                            value={email}
-                            onChangeText={setEmail}
-                            autoCapitalize="none"
+                        <TextInput 
+                            style={styles.input} 
+                            placeholder="E-mail" 
+                            placeholderTextColor="#555" 
+                            value={email} 
+                            onChangeText={setEmail} 
+                            autoCapitalize="none" 
                             keyboardType="email-address"
                         />
                     </View>
 
                     <View style={styles.inputWrapper}>
                         <Ionicons name="lock-closed-outline" size={20} color="#666" style={styles.inputIcon} />
-                        <TextInput
-                            style={styles.input}
-                            placeholder="Senha"
-                            placeholderTextColor="#555"
-                            value={password}
-                            onChangeText={setPassword}
-                            secureTextEntry
+                        <TextInput 
+                            style={styles.input} 
+                            placeholder="Senha do Perfil" 
+                            placeholderTextColor="#555" 
+                            value={password} 
+                            onChangeText={setPassword} 
+                            secureTextEntry 
                         />
                     </View>
 
@@ -121,40 +106,35 @@ export default function LoginMotorista() {
                     </TouchableOpacity>
                 </View>
 
-                <TouchableOpacity
-                    style={styles.registerLink}
+                <TouchableOpacity 
+                    style={styles.registerLink} 
                     onPress={() => router.push('/(auth)/registerMotorista')}
                 >
-                    <Text style={styles.registerTextNormal}>Não tem conta? </Text>
-                    <Text style={styles.registerTextBold}>Cadastre-se aqui</Text>
+                    <Text style={styles.registerTextNormal}>Novo por aqui? </Text>
+                    <Text style={styles.registerTextBold}>Criar cadastro de motorista</Text>
                 </TouchableOpacity>
             </View>
         </KeyboardAvoidingView>
     );
 }
 
-// Os estilos permanecem os mesmos...
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#000' },
     content: { flex: 1, justifyContent: 'center', paddingHorizontal: 30 },
     iconCircle: {
-        width: 80, height: 80, borderRadius: 40, backgroundColor: '#007AFF15',
+        width: 80, height: 80, borderRadius: 40, backgroundColor: '#1ac22815',
         justifyContent: 'center', alignItems: 'center', alignSelf: 'center',
-        marginBottom: 20, borderWidth: 1, borderColor: '#007AFF30',
+        marginBottom: 20, borderWidth: 1, borderColor: '#21b84730',
     },
-    title: { fontSize: 28, fontWeight: '800', color: '#fff', textAlign: 'center', marginBottom: 8, letterSpacing: -0.5 },
-    subtitle: { fontSize: 16, color: '#666', textAlign: 'center', marginBottom: 40, lineHeight: 22 },
+    title: { fontSize: 24, fontWeight: '800', color: '#fff', textAlign: 'center', marginBottom: 8 },
+    subtitle: { fontSize: 14, color: '#666', textAlign: 'center', marginBottom: 40 },
     form: { gap: 15 },
     inputWrapper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#111', borderRadius: 14, borderWidth: 1, borderColor: '#222', paddingHorizontal: 15 },
     inputIcon: { marginRight: 10 },
     input: { flex: 1, color: '#fff', paddingVertical: 18, fontSize: 16 },
-    button: {
-        backgroundColor: '#007AFF', paddingVertical: 18, borderRadius: 14, alignItems: 'center',
-        marginTop: 10, shadowColor: '#007AFF', shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3, shadowRadius: 10, elevation: 8,
-    },
+    button: { backgroundColor: '#1eb318', paddingVertical: 18, borderRadius: 14, alignItems: 'center', marginTop: 10 },
     buttonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
     registerLink: { flexDirection: 'row', justifyContent: 'center', marginTop: 30 },
     registerTextNormal: { color: '#666', fontSize: 15 },
-    registerTextBold: { color: '#007AFF', fontSize: 15, fontWeight: 'bold' }
+    registerTextBold: { color: '#34C759', fontSize: 15, fontWeight: 'bold' }
 });
