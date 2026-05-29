@@ -1,5 +1,4 @@
 import { supabase } from "@/src/lib/supabase";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useState } from "react";
 
 export function useRidesRealtime(online: boolean, corridaEmAndamento: any) {
@@ -21,7 +20,10 @@ export function useRidesRealtime(online: boolean, corridaEmAndamento: any) {
       try {
         // 1. Busca o token armazenado no celular após o login
         // Certifique-se de usar a MESMA chave que você usou na tela de Login (ex: 'token', 'user_token' ou 'supabase.auth.token')
-        const token = await AsyncStorage.getItem("user_token");
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        const token = session?.access_token;
 
         console.log("🔑 [Frontend] Token recuperado do AsyncStorage:", token);
 
@@ -34,7 +36,7 @@ export function useRidesRealtime(online: boolean, corridaEmAndamento: any) {
 
         // 2. Faz a chamada passando o token no formato Bearer correto
         const response = await fetch(
-          "http://localhost:3001/api/rides/pendentes",
+          "http://localhost:3001/api/rides/disponiveis",
           {
             method: "GET",
             headers: {
